@@ -4,7 +4,6 @@ mod keymap;
 use crossbeam_channel::unbounded;
 use core_graphics::event::{CGEventTap, CGEventTapLocation, CGEventTapPlacement, CGEventTapOptions, CGEventType, EventField, CGEventFlags};
 use core_foundation::runloop::CFRunLoop;
-use rodio::cpal::traits::{DeviceTrait, HostTrait};
 use rodio::{Decoder, OutputStream, Source};
 use serde::Deserialize;
 use std::{
