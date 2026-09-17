@@ -222,7 +222,22 @@ fn main() {
     let m = Menu::new();
     let packs_menu = Submenu::with_id("packs", "Sound Packs", true);
     
-    let packs_dir = Path::new("packs");
+let exe_path = std::env::current_exe().unwrap();
+    let exe_dir = exe_path.parent().unwrap();
+    let mut packs_dir_buf = exe_dir.join("packs");
+    
+    // If inside a macOS .app bundle (Contents/MacOS/thock), packs are in Contents/Resources/packs
+    if exe_dir.ends_with("MacOS") {
+        if let Some(contents_dir) = exe_dir.parent() {
+            packs_dir_buf = contents_dir.join("Resources").join("packs");
+        }
+    }
+    
+    // Fallback if running via cargo run
+    if !packs_dir_buf.exists() {
+        packs_dir_buf = std::env::current_dir().unwrap().join("packs");
+    }
+    let packs_dir = packs_dir_buf.as_path();
     let mut available_packs = Vec::new();
     let mut pack_items = HashMap::new();
     
