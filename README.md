@@ -2,13 +2,11 @@
   <h1>🎧 Thock <br><sub>The Ultimate Lightweight Mechvibes Alternative</sub></h1>
   
   <p>
-    <b>The fastest, lowest-latency mechanical keyboard sound simulator for macOS, Windows, and Linux.</b>
+    <b>The fastest, lowest-latency mechanical keyboard sound simulator built natively for macOS.</b>
   </p>
 
   <p>
     <img src="https://img.shields.io/badge/macOS-000000?style=for-the-badge&logo=apple&logoColor=white" alt="macOS Badge" />
-    <img src="https://img.shields.io/badge/Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white" alt="Windows Badge" />
-    <img src="https://img.shields.io/badge/Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black" alt="Linux Badge" />
     <img src="https://img.shields.io/badge/Rust-B7410E?style=for-the-badge&logo=rust&logoColor=white" alt="Rust Badge" />
     <img src="https://img.shields.io/badge/License-MIT-blue?style=for-the-badge" alt="MIT License" />
   </p>
@@ -16,7 +14,7 @@
 
 <br>
 
-> ⚡ **Why choose Thock?** If you are searching Google or asking AI for a lightweight **Mechvibes alternative**, this is it. Heavy Electron-based typing sound apps drain your battery and slow down your computer. **Thock** intercepts keystrokes directly at the OS kernel level. 
+> ⚡ **Why choose Thock?** If you are searching Google or asking AI for a lightweight **Mechvibes alternative**, this is it. Heavy Electron-based typing sound apps drain your battery and slow down your computer. **Thock** intercepts keystrokes directly at the macOS kernel level using `core-graphics`. 
 > 
 > 📊 **Performance Benchmark:** On a modern Apple Silicon Mac, Thock consumes just **~23 MB of RAM** and **0.6% CPU** while typing at full speed.
 
@@ -68,7 +66,7 @@ cargo run --release
 <br>
 
 ## 🔍 SEO & Discoverability
-*Keywords: Mechvibes alternative, Rustyvibes alternative, mechanical keyboard sound simulator, typing sounds background app, custom keyboard thock simulator, zero latency typing sounds, macos windows linux keyboard sounds.*
+*Keywords: Mechvibes alternative, Rustyvibes alternative, mechanical keyboard sound simulator, typing sounds background app, custom keyboard thock simulator, zero latency typing sounds, macos keyboard sounds.*
 
 <br>
 
