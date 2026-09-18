@@ -266,6 +266,7 @@ let exe_path = std::env::current_exe().unwrap();
     m.append_items(&[&packs_menu, &PredefinedMenuItem::separator()]).unwrap();
 
     let toggle_fav_item = MenuItem::with_id("toggle_fav", "⭐ Mark as Favorite", true, None);
+    let delete_pack_item = MenuItem::with_id("delete_pack", "🗑️ Delete Current Pack", true, None);
     let vol_display = MenuItem::with_id("vol_display", &format_volume_slider(100), false, None);
     let vol_up_i = MenuItem::with_id("up", "Increase Volume (+10%)", true, None);
     let vol_down_i = MenuItem::with_id("dn", "Decrease Volume (-10%)", true, None);
@@ -273,6 +274,7 @@ let exe_path = std::env::current_exe().unwrap();
     
     m.append_items(&[
         &toggle_fav_item,
+        &delete_pack_item,
         &PredefinedMenuItem::separator(),
         &vol_display,
         &vol_up_i,
