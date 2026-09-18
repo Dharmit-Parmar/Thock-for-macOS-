@@ -217,7 +217,10 @@ fn main() {
 
     let event_loop = EventLoop::new();
     let key_map = keymap::get_key_map();
+    
     let (hotkey_tx, hotkey_rx) = unbounded::<HotkeyAction>();
+    let proxy = event_loop.create_proxy();
+
     
     let m = Menu::new();
     let packs_menu = Submenu::with_id("packs", "Sound Packs", true);
@@ -345,11 +348,11 @@ let exe_path = std::env::current_exe().unwrap();
 
                 if ctrl && alt {
                     match keycode {
-                        126 /* Up */ => { let _ = hotkey_tx.send(HotkeyAction::VolUp); return None; }
-                        125 /* Down */ => { let _ = hotkey_tx.send(HotkeyAction::VolDown); return None; }
-                        124 /* Right */ => { let _ = hotkey_tx.send(HotkeyAction::NextPack); return None; }
-                        123 /* Left */ => { let _ = hotkey_tx.send(HotkeyAction::PrevPack); return None; }
-                        3 /* F */ => { let _ = hotkey_tx.send(HotkeyAction::ToggleFav); return None; }
+                        126 /* Up */ => { let _ = hotkey_tx.send(HotkeyAction::VolUp); let _ = proxy.send_event(()); return None; }
+                        125 /* Down */ => { let _ = hotkey_tx.send(HotkeyAction::VolDown); let _ = proxy.send_event(()); return None; }
+                        124 /* Right */ => { let _ = hotkey_tx.send(HotkeyAction::NextPack); let _ = proxy.send_event(()); return None; }
+                        123 /* Left */ => { let _ = hotkey_tx.send(HotkeyAction::PrevPack); let _ = proxy.send_event(()); return None; }
+                        3 /* F */ => { let _ = hotkey_tx.send(HotkeyAction::ToggleFav); let _ = proxy.send_event(()); return None; }
                         _ => {}
                     }
                 }
@@ -405,7 +408,7 @@ let exe_path = std::env::current_exe().unwrap();
     let packs_dir = packs_dir.to_path_buf();
     
     event_loop.run(move |_event, _, control_flow| {
-        *control_flow = ControlFlow::WaitUntil(std::time::Instant::now() + std::time::Duration::from_millis(50));
+        *control_flow = ControlFlow::Wait;
         
         let mut handle_action = |action: HotkeyAction| {
             match action {
