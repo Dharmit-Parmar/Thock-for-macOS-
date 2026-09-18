@@ -499,6 +499,34 @@ let exe_path = std::env::current_exe().unwrap();
                 handle_action(HotkeyAction::VolDown);
             } else if id == "toggle_fav" {
                 handle_action(HotkeyAction::ToggleFav);
+            } else if id == "delete_pack" {
+                let current = current_pack_name.read().unwrap().clone();
+                let target_dir = packs_dir.join(&current);
+                if target_dir.exists() {
+                    let _ = std::fs::remove_dir_all(&target_dir);
+                    
+                    // Show mac notification
+                    let _ = std::process::Command::new("osascript")
+                        .arg("-e")
+                        .arg(format!("display notification \"Sound pack '{}' deleted! Please restart Thock to update the menu.\" with title \"Thock\"", current))
+                        .spawn();
+                        
+                    // Switch to fallback pack instantly
+                    if let Some(fallback) = available_packs.iter().find(|p| *p != &current) {
+                        let fallback_name = fallback.clone();
+                        *current_pack_name.write().unwrap() = fallback_name.clone();
+                        let cp = current_pack.clone();
+                        let pd = packs_dir.clone();
+                        std::thread::spawn(move || {
+                            if let Some(loaded) = load_pack(&pd.join(&fallback_name)) {
+                                *cp.write().unwrap() = Some(loaded);
+                            }
+                        });
+                    } else {
+                        // No packs left!
+                        *current_pack.write().unwrap() = None;
+                    }
+                }
             } else if id.starts_with("pack_") {
                 let pack_name = id[5..].to_string();
                 *current_pack_name.write().unwrap() = pack_name.clone();
