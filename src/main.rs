@@ -103,6 +103,7 @@ fn load_audio_file(path: &Path) -> Option<ArcBuffer> {
 
 
 #[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Debug)]
 struct AppSettings {
     volume: u32,
     pack: String,
@@ -299,10 +300,16 @@ let exe_path = std::env::current_exe().unwrap();
     let mut starting_pack = available_packs.first().cloned();
     
     if let Some(settings) = load_settings(&settings_path) {
+        println!("BOOT: Loaded settings: {:?}", settings);
         VOL.store(settings.volume, std::sync::atomic::Ordering::Relaxed);
         if available_packs.contains(&settings.pack) {
-            starting_pack = Some(settings.pack);
+            starting_pack = Some(settings.pack.clone());
+            println!("BOOT: Starting pack updated to {}", settings.pack);
+        } else {
+            println!("BOOT: Pack {} not found in available_packs!", settings.pack);
         }
+    } else {
+        println!("BOOT: Failed to load settings from {:?}", settings_path);
     }
 
     if let Some(first) = starting_pack {
@@ -439,6 +446,7 @@ let exe_path = std::env::current_exe().unwrap();
                         item.set_checked(name == &pack_name);
                     }
                     
+                        save_settings(&packs_dir.join(".settings.json"), VOL.load(std::sync::atomic::Ordering::Relaxed), &pack_name);
                     if favorites.contains(&pack_name) {
                         toggle_fav_item.set_text("❌ Remove from Favorites");
                     } else {
@@ -496,6 +504,7 @@ let exe_path = std::env::current_exe().unwrap();
                     item.set_checked(name == &pack_name);
                 }
                 
+                        save_settings(&packs_dir.join(".settings.json"), VOL.load(std::sync::atomic::Ordering::Relaxed), &pack_name);
                 if favorites.contains(&pack_name) {
                     toggle_fav_item.set_text("❌ Remove from Favorites");
                 } else {
