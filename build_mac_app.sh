@@ -7,6 +7,10 @@ CONTENTS_DIR="${APP_DIR}/Contents"
 MACOS_DIR="${CONTENTS_DIR}/MacOS"
 RESOURCES_DIR="${CONTENTS_DIR}/Resources"
 
+echo "Terminating any running instances of Thock..."
+killall Thock 2>/dev/null || true
+sleep 1
+
 echo "Building Rust binary..."
 source $HOME/.cargo/env
 cargo build --release
@@ -19,6 +23,7 @@ mkdir -p "${RESOURCES_DIR}"
 echo "Copying binary and sound packs..."
 cp target/release/thock "${MACOS_DIR}/Thock"
 cp -r packs "${RESOURCES_DIR}/packs"
+cp AppIcon.icns "${RESOURCES_DIR}/AppIcon.icns"
 
 echo "Generating Info.plist..."
 cat <<PLIST > "${CONTENTS_DIR}/Info.plist"
@@ -38,8 +43,6 @@ cat <<PLIST > "${CONTENTS_DIR}/Info.plist"
     <string>1.0.0</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
-    <key>LSUIElement</key>
-    <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
 </dict>

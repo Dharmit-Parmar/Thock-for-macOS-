@@ -1,28 +1,27 @@
 mod keymap;
 
-
-use crossbeam_channel::unbounded;
-use core_graphics::event::{CGEventTap, CGEventTapLocation, CGEventTapPlacement, CGEventTapOptions, CGEventType, EventField, CGEventFlags};
+use core_graphics::event::{CGEventTap, CGEventTapLocation, CGEventTapPlacement, CGEventTapOptions, CGEventType, EventField};
 use core_foundation::runloop::CFRunLoop;
 use rodio::{Decoder, OutputStream, Source};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use std::{
     collections::{HashMap, HashSet},
     fs::{self, File},
-    io::{BufRead, BufReader, Write},
+    io::BufReader,
     path::Path,
-    process,
     sync::{
         atomic::{AtomicU32, Ordering},
         Arc, RwLock,
     },
     thread,
 };
+
+use tao::event::{Event, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoop};
-use tray_icon::{
-    menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu},
-    TrayIconBuilder,
-};
+use tao::window::WindowBuilder;
+
+use wry::WebViewBuilder;
 
 #[cfg(target_os = "macos")]
 extern "C" {
@@ -30,14 +29,6 @@ extern "C" {
 }
 
 static VOL: AtomicU32 = AtomicU32::new(100);
-
-enum HotkeyAction {
-    VolUp,
-    VolDown,
-    NextPack,
-    PrevPack,
-    ToggleFav,
-}
 
 #[derive(Clone)]
 struct ArcBuffer {
@@ -101,14 +92,11 @@ fn load_audio_file(path: &Path) -> Option<ArcBuffer> {
     Some(ArcBuffer::new(Arc::new(samples), channels, sample_rate))
 }
 
-
-#[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 struct AppSettings {
     volume: u32,
     pack: String,
 }
-
 
 fn load_settings(path: &std::path::Path) -> Option<AppSettings> {
     let json = std::fs::read_to_string(path).ok()?;
@@ -148,190 +136,78 @@ fn load_pack(pack_dir: &Path) -> Option<LoadedPack> {
     Some(LoadedPack { defaults, mappings })
 }
 
-fn get_friendly_name(dir: &str) -> String {
-    match dir {
-        "cherry_mx_brown_pbt" => "Cherry MX Brown PBT (Tactile / Thocky)".to_string(),
-        "cherry_mx_brown_abs" => "Cherry MX Brown ABS (Tactile / Clack)".to_string(),
-        "cherry_mx_red_abs" => "Cherry MX Red ABS (Linear / Clacky)".to_string(),
-        "cherry_mx_red_pbt" => "Cherry MX Red PBT (Linear / Thocky)".to_string(),
-        "cherry_mx_black_abs" => "Cherry MX Black ABS (Linear / Heavy)".to_string(),
-        "cherry_mx_black_pbt" => "Cherry MX Black PBT (Linear / Heavy Thock)".to_string(),
-        "nk_cream" => "NK Cream (Linear / Buttery)".to_string(),
-        "nk_cream_loud" => "NK Cream (Loud 150%)".to_string(),
-        "topre_purple" => "Topre Purple (Deep Marbly Thock)".to_string(),
-        "pe_foam_creamy" => "PE Foam Custom (Ultra Smooth & Creamy)".to_string(),
-        "tape_mod_custom" => "Tape Mod Custom (Marbly & Poppy)".to_string(),
-        "overlubed_custom" => "Overlubed Custom (Deep & Muted)".to_string(),
-        "glassy_custom" => "Glassy Custom (Crisp & Clacky)".to_string(),
-        "tealios_v2" => "Tealios V2 (Linear / Smooth)".to_string(),
-        "glorious_panda" => "Glorious Panda (Tactile / Snappy)".to_string(),
-        "kailh_box_white" => "Kailh Box White (Clicky / Sharp)".to_string(),
-        "eg_crystal_purple" => "EG Crystal Purple (Tactile / Crisp)".to_string(),
-        "steelseries_apex_pro_v2" => "SteelSeries Apex Pro (Linear / Magnetic)".to_string(),
-        "unicomp_classic" => "Unicomp Classic / IBM M (Buckling Spring / Loud)".to_string(),
-        "animal_crossing_nl" => "Animal Crossing (Gaming / Fun)".to_string(),
-        "osu" => "Osu! (Gaming / Tap)".to_string(),
-        "minimal_tick" => "Minimal Tick (Quiet / Subtle)".to_string(),
-        _ => dir.to_string(),
-    }
-}
-
-fn format_volume_slider(vol_percent: u32) -> String {
-    let filled = (vol_percent / 20).min(10) as usize;
-    let empty = 10 - filled;
-    let bar = "▰".repeat(filled) + &"▱".repeat(empty);
-    format!("🔉 {}  {}%", bar, vol_percent)
-}
-
-fn load_favorites() -> HashSet<String> {
-    let mut favs = HashSet::new();
-    if let Ok(file) = File::open("packs/.favorites") {
-        for line in BufReader::new(file).lines().flatten() {
-            let trimmed = line.trim();
-            if !trimmed.is_empty() {
-                favs.insert(trimmed.to_string());
-            }
-        }
-    }
-    favs
-}
-
-fn save_favorites(favs: &HashSet<String>) {
-    if let Ok(mut file) = File::create("packs/.favorites") {
-        for f in favs {
-            let _ = writeln!(file, "{}", f);
-        }
-    }
+#[derive(Deserialize)]
+struct IpcMessage {
+    r#type: String,
+    value: Option<serde_json::Value>,
 }
 
 fn main() {
+    let current_exe = std::env::current_exe().unwrap();
+    let exe_dir = current_exe.parent().unwrap();
+    
+    let packs_dir = if exe_dir.ends_with("MacOS") {
+        exe_dir.parent().unwrap().join("Resources").join("packs")
+    } else {
+        std::env::current_dir().unwrap().join("packs")
+    };
+    
+    let _ = fs::create_dir_all(&packs_dir);
 
-    #[cfg(target_os = "macos")]
-    if unsafe { !AXIsProcessTrusted() } {
-        process::Command::new("open")
-            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
-            .spawn()
-            .unwrap();
-        eprintln!("Enable Accessibility permissions and restart.");
-        return;
-    }
-
-    let event_loop = EventLoop::new();
-    let key_map = keymap::get_key_map();
-    
-    let (hotkey_tx, hotkey_rx) = unbounded::<HotkeyAction>();
-    let proxy = event_loop.create_proxy();
-
-    
-    let m = Menu::new();
-    let packs_menu = Submenu::with_id("packs", "Sound Packs", true);
-    
-let exe_path = std::env::current_exe().unwrap();
-    let exe_dir = exe_path.parent().unwrap();
-    let mut packs_dir_buf = exe_dir.join("packs");
-    
-    // If inside a macOS .app bundle (Contents/MacOS/thock), packs are in Contents/Resources/packs
-    if exe_dir.ends_with("MacOS") {
-        if let Some(contents_dir) = exe_dir.parent() {
-            packs_dir_buf = contents_dir.join("Resources").join("packs");
-        }
-    }
-    
-    // Fallback if running via cargo run
-    if !packs_dir_buf.exists() {
-        packs_dir_buf = std::env::current_dir().unwrap().join("packs");
-    }
-    let packs_dir = packs_dir_buf.as_path();
     let mut available_packs = Vec::new();
-    let mut pack_items = HashMap::new();
+    if let Ok(entries) = fs::read_dir(&packs_dir) {
+        for entry in entries.flatten() {
+            if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                if let Ok(name) = entry.file_name().into_string() {
+                    available_packs.push(name);
+                }
+            }
+        }
+    }
+    available_packs.sort();
     
-    let mut favorites = load_favorites();
-
-    if let Ok(entries) = fs::read_dir(packs_dir) {
-        let mut dirs: Vec<_> = entries.flatten().filter(|e| e.path().is_dir()).collect();
-        dirs.sort_by_key(|e| e.file_name());
-        
-        for entry in dirs {
-            let dir_name = entry.file_name().to_string_lossy().to_string();
-            available_packs.push(dir_name.clone());
-            
-            let friendly = get_friendly_name(&dir_name);
-            let star = if favorites.contains(&dir_name) { "⭐ " } else { "" };
-            let item = CheckMenuItem::with_id(format!("pack_{}", dir_name), &format!("{}{}", star, friendly), true, false, None);
-            packs_menu.append(&item).unwrap();
-            pack_items.insert(dir_name, item);
+    let favorites = Arc::new(RwLock::new(HashSet::new()));
+    if let Ok(json) = fs::read_to_string(packs_dir.join(".favorites.json")) {
+        if let Ok(favs) = serde_json::from_str::<HashSet<String>>(&json) {
+            *favorites.write().unwrap() = favs;
         }
     }
     
-    m.append_items(&[&packs_menu, &PredefinedMenuItem::separator()]).unwrap();
-
-    let toggle_fav_item = MenuItem::with_id("toggle_fav", "⭐ Mark as Favorite", true, None);
-    let delete_pack_item = MenuItem::with_id("delete_pack", "🗑️ Delete Current Pack", true, None);
-    let vol_display = MenuItem::with_id("vol_display", &format_volume_slider(100), false, None);
-    let vol_up_i = MenuItem::with_id("up", "Increase Volume (+10%)", true, None);
-    let vol_down_i = MenuItem::with_id("dn", "Decrease Volume (-10%)", true, None);
-    let hotkey_info = MenuItem::with_id("info", "Shortcuts: Ctrl+Option+Arrows, Fav: F", false, None);
-    
-    m.append_items(&[
-        &toggle_fav_item,
-        &delete_pack_item,
-        &PredefinedMenuItem::separator(),
-        &vol_display,
-        &vol_up_i,
-        &vol_down_i,
-        &PredefinedMenuItem::separator(),
-        &hotkey_info,
-        &PredefinedMenuItem::separator(),
-        &MenuItem::with_id("quit", "Quit Thock", true, None),
-    ]).unwrap();
-
-    let _tray = TrayIconBuilder::new()
-        .with_title("🎧 Thock")
-        .with_menu(Box::new(m))
-        .build()
-        .unwrap();
-
-    let current_pack = Arc::new(RwLock::new(None::<LoadedPack>));
+    let current_pack = Arc::new(RwLock::new(None));
     let current_pack_name = Arc::new(RwLock::new(String::new()));
     
-    // Sort available_packs to push favorites to the top logically, but the menu is already built.
-    // Instead of sorting the array which breaks indices, we'll just keep the menu alphabetical 
-    // with stars making them visually stand out.
-
     let settings_path = packs_dir.join(".settings.json");
     let mut starting_pack = available_packs.first().cloned();
     
     if let Some(settings) = load_settings(&settings_path) {
-        println!("BOOT: Loaded settings: {:?}", settings);
         VOL.store(settings.volume, std::sync::atomic::Ordering::Relaxed);
         if available_packs.contains(&settings.pack) {
-            starting_pack = Some(settings.pack.clone());
-            println!("BOOT: Starting pack updated to {}", settings.pack);
-        } else {
-            println!("BOOT: Pack {} not found in available_packs!", settings.pack);
+            starting_pack = Some(settings.pack);
         }
-    } else {
-        println!("BOOT: Failed to load settings from {:?}", settings_path);
     }
-
+    
     if let Some(first) = starting_pack {
         *current_pack.write().unwrap() = load_pack(&packs_dir.join(&first));
         *current_pack_name.write().unwrap() = first.clone();
-        if let Some(item) = pack_items.get(&first) {
-            item.set_checked(true);
+    }
+    
+    let pack_clone = current_pack.clone();
+    let ax_trusted = unsafe { AXIsProcessTrusted() };
+
+    let is_cli = std::env::args().any(|arg| arg == "--cli");
+    if is_cli {
+        println!("🎧 Thock is running in Lightweight CLI mode...");
+        if !ax_trusted {
+            println!("⚠️ WARNING: Accessibility permissions not granted. Keypresses may not be detected.");
         }
-        if favorites.contains(&first) {
-            toggle_fav_item.set_text("❌ Remove from Favorites");
-        } else {
-            toggle_fav_item.set_text("⭐ Mark as Favorite");
-        }
+        println!("Current Pack: {}", *current_pack_name.read().unwrap());
+        println!("Press Ctrl+C to quit.");
     }
 
-    let pack_clone = current_pack.clone();
-
-    thread::spawn(move || {
+    // Audio + CGEventTap
+    let audio_thread = move || {
         let (_s, handle) = match OutputStream::try_default() {
-            Ok(res) => res,
+            Ok(x) => x,
             Err(e) => {
                 eprintln!("Audio device error: {:?}", e);
                 return;
@@ -345,29 +221,13 @@ let exe_path = std::env::current_exe().unwrap();
             CGEventTapOptions::ListenOnly,
             vec![CGEventType::KeyDown],
             move |_proxy, _type, cg_event| {
-                let is_autorepeat = cg_event.get_integer_value_field(8) != 0; // 8 is kCGKeyboardEventAutorepeat
-                if is_autorepeat {
-                    return None;
-                }
+                let is_autorepeat = cg_event.get_integer_value_field(8) != 0;
+                if is_autorepeat { return None; }
 
                 let keycode = cg_event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) as u16;
-                let flags = cg_event.get_flags();
-                let ctrl = flags.contains(CGEventFlags::CGEventFlagControl);
-                let alt = flags.contains(CGEventFlags::CGEventFlagAlternate);
 
-                if ctrl && alt {
-                    match keycode {
-                        126 /* Up */ => { let _ = hotkey_tx.send(HotkeyAction::VolUp); let _ = proxy.send_event(()); return None; }
-                        125 /* Down */ => { let _ = hotkey_tx.send(HotkeyAction::VolDown); let _ = proxy.send_event(()); return None; }
-                        124 /* Right */ => { let _ = hotkey_tx.send(HotkeyAction::NextPack); let _ = proxy.send_event(()); return None; }
-                        123 /* Left */ => { let _ = hotkey_tx.send(HotkeyAction::PrevPack); let _ = proxy.send_event(()); return None; }
-                        3 /* F */ => { let _ = hotkey_tx.send(HotkeyAction::ToggleFav); let _ = proxy.send_event(()); return None; }
-                        _ => {}
-                    }
-                }
-
-                if let Some(pack) = pack_clone.read().unwrap().as_ref() {
-                    let audio = if let Some(code) = key_map.get(&keycode) {
+                if let Some(pack) = &*pack_clone.read().unwrap() {
+                    let audio = if let Some(code) = keymap::get_key_map().get(&keycode) {
                         if let Some(mapped) = pack.mappings.get(code) {
                             Some(mapped)
                         } else if !pack.defaults.is_empty() {
@@ -385,7 +245,7 @@ let exe_path = std::env::current_exe().unwrap();
 
                     if let Some(a) = audio {
                         let vol_percent = VOL.load(Ordering::Relaxed) as f32 / 100.0;
-                        let vol = vol_percent * vol_percent * vol_percent; // Cubic scaling for natural human hearing
+                        let vol = vol_percent * vol_percent * vol_percent;
                         let buf = a.clone().with_volume(vol);
                         let _ = handle.play_raw(buf.convert_samples());
                     }
@@ -394,7 +254,6 @@ let exe_path = std::env::current_exe().unwrap();
             }
         );
 
-        
         match tap_res {
             Ok(tap) => {
                 let source = tap.mach_port.create_runloop_source(0).unwrap();
@@ -402,153 +261,172 @@ let exe_path = std::env::current_exe().unwrap();
                 tap.enable();
                 unsafe { core_foundation::runloop::CFRunLoopRun() };
             }
-            Err(e) => {
-                eprintln!("Event tap error: {:?}", e);
-                let _ = std::process::Command::new("osascript")
-                    .arg("-e")
-                    .arg("display alert \"Accessibility Blocked\" message \"macOS silently blocked the keyboard listener because the app was updated. Please go to System Settings > Privacy & Security > Accessibility, select Thock, click the MINUS (-) button to completely remove it, then restart Thock.\"")
-                    .spawn();
-                std::process::exit(1);
-            }
+            Err(e) => eprintln!("Event tap error: {:?}", e),
         }
-    });
+    };
 
-    let menu_channel = MenuEvent::receiver();
-    let packs_dir = packs_dir.to_path_buf();
+    if is_cli {
+        audio_thread();
+        return;
+    } else {
+        thread::spawn(audio_thread);
+    }
+
+    let event_loop = EventLoop::new();
+    let window = WindowBuilder::new()
+        .with_title("Thock")
+        .with_inner_size(tao::dpi::LogicalSize::new(800.0, 600.0))
+        .build(&event_loop)
+        .unwrap();
+
+    let ipc_current_pack = current_pack.clone();
+    let ipc_current_pack_name = current_pack_name.clone();
+    let ipc_packs_dir = packs_dir.clone();
+    let ipc_favorites = favorites.clone();
+
+    let html_template = include_str!("../ui.html");
     
-    event_loop.run(move |_event, _, control_flow| {
-        *control_flow = ControlFlow::Wait;
+    let mut packs_html = String::new();
+    let current_pack_read = ipc_current_pack_name.read().unwrap().clone();
+    let favs = favorites.read().unwrap().clone();
+    
+    let mut sorted_packs = available_packs.clone();
+    sorted_packs.sort_by(|a, b| {
+        let a_fav = favs.contains(a);
+        let b_fav = favs.contains(b);
+        b_fav.cmp(&a_fav).then(a.cmp(b))
+    });
+    
+    for pack in &sorted_packs {
+        let is_active = *pack == current_pack_read;
+        let is_fav = favs.contains(pack);
         
-        let mut handle_action = |action: HotkeyAction| {
-            match action {
-                HotkeyAction::VolUp => {
-                    let _ = VOL.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| Some((v + 10).min(200)));
-                    vol_display.set_text(format_volume_slider(VOL.load(Ordering::Relaxed)));
-                    save_settings(&packs_dir.join(".settings.json"), VOL.load(Ordering::Relaxed), &*current_pack_name.read().unwrap());
-                }
-                HotkeyAction::VolDown => {
-                    let _ = VOL.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| Some(v.saturating_sub(10)));
-                    vol_display.set_text(format_volume_slider(VOL.load(Ordering::Relaxed)));
-                    save_settings(&packs_dir.join(".settings.json"), VOL.load(Ordering::Relaxed), &*current_pack_name.read().unwrap());
-                }
-                HotkeyAction::NextPack | HotkeyAction::PrevPack => {
-                    if available_packs.is_empty() { return; }
-                    let current = current_pack_name.read().unwrap().clone();
-                    let current_idx = available_packs.iter().position(|p| p == &current).unwrap_or(0);
-                    let new_idx = match action {
-                        HotkeyAction::NextPack => (current_idx + 1) % available_packs.len(),
-                        HotkeyAction::PrevPack => (current_idx + available_packs.len() - 1) % available_packs.len(),
-                        _ => 0,
-                    };
-                    let pack_name = available_packs[new_idx].clone();
-                    
-                    *current_pack_name.write().unwrap() = pack_name.clone();
-                    save_settings(&packs_dir.join(".settings.json"), VOL.load(Ordering::Relaxed), &pack_name);
-                    for (name, item) in &pack_items {
-                        item.set_checked(name == &pack_name);
-                    }
-                    
-                        save_settings(&packs_dir.join(".settings.json"), VOL.load(std::sync::atomic::Ordering::Relaxed), &pack_name);
-                    if favorites.contains(&pack_name) {
-                        toggle_fav_item.set_text("❌ Remove from Favorites");
-                    } else {
-                        toggle_fav_item.set_text("⭐ Mark as Favorite");
-                    }
-                    
-                    let cp = current_pack.clone();
-                    let pd = packs_dir.clone();
-                    thread::spawn(move || {
-                        if let Some(loaded) = load_pack(&pd.join(&pack_name)) {
-                            *cp.write().unwrap() = Some(loaded);
-                        }
-                    });
-                }
-                HotkeyAction::ToggleFav => {
-                    let current = current_pack_name.read().unwrap().clone();
-                    if current.is_empty() { return; }
-                    
-                    let is_fav = favorites.contains(&current);
-                    if is_fav {
-                        favorites.remove(&current);
-                        toggle_fav_item.set_text("⭐ Mark as Favorite");
-                    } else {
-                        favorites.insert(current.clone());
-                        toggle_fav_item.set_text("❌ Remove from Favorites");
-                    }
-                    save_favorites(&favorites);
-                    
-                    if let Some(item) = pack_items.get(&current) {
-                        let star = if favorites.contains(&current) { "⭐ " } else { "" };
-                        item.set_text(format!("{}{}", star, get_friendly_name(&current)));
-                    }
-                }
-            }
-        };
+        let active_badge = if is_active {
+            r#"inline-block"#
+        } else { "none" };
+        
+        let active_card_class = if is_active { "border-pink-400 bg-white/70 shadow-md" } else { "bg-white/40" };
+        let active_anim = if is_active { "flex" } else { "none" };
+        
+        let fav_class = if is_fav { "text-yellow-400 fill-current" } else { "text-gray-400" };
 
-        if let Ok(action) = hotkey_rx.try_recv() {
-            handle_action(action);
-        }
+        let display_name = pack.replace("_", " ").to_uppercase();
+        let safe_id = pack.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect::<String>();
 
-        if let Ok(e) = menu_channel.try_recv() {
-            let id = e.id.as_ref();
-            if id == "quit" {
-                process::exit(0);
-            } else if id == "up" {
-                handle_action(HotkeyAction::VolUp);
-            } else if id == "dn" {
-                handle_action(HotkeyAction::VolDown);
-            } else if id == "toggle_fav" {
-                handle_action(HotkeyAction::ToggleFav);
-            } else if id == "delete_pack" {
-                let current = current_pack_name.read().unwrap().clone();
-                let target_dir = packs_dir.join(&current);
-                if target_dir.exists() {
-                    let _ = std::fs::remove_dir_all(&target_dir);
-                    
-                    // Show mac notification
-                    let _ = std::process::Command::new("osascript")
-                        .arg("-e")
-                        .arg(format!("display notification \"Sound pack '{}' deleted! Please restart Thock to update the menu.\" with title \"Thock\"", current))
-                        .spawn();
-                        
-                    // Switch to fallback pack instantly
-                    if let Some(fallback) = available_packs.iter().find(|p| *p != &current) {
-                        let fallback_name = fallback.clone();
-                        *current_pack_name.write().unwrap() = fallback_name.clone();
-                        let cp = current_pack.clone();
-                        let pd = packs_dir.clone();
-                        std::thread::spawn(move || {
-                            if let Some(loaded) = load_pack(&pd.join(&fallback_name)) {
-                                *cp.write().unwrap() = Some(loaded);
+        let card = format!(r#"
+            <div id="pack-{}" onclick="selectPack('{}')" class="pack-card glass-card py-3.5 px-5 rounded-2xl cursor-pointer flex items-center justify-between group {} transition-all hover:bg-white/60 mb-2.5 border border-white/20">
+                <div class="flex items-center space-x-3.5">
+                    <div class="w-10 h-10 rounded-full bg-pink-50 flex items-center justify-center shadow-sm text-pink-500">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"></path></svg>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-gray-800 text-base flex items-center">
+                            {}
+                            <span class="active-badge ml-2 px-2 py-0.5 rounded-md bg-pink-200 text-pink-700 text-xs font-semibold tracking-wide uppercase" style="display: {}">Active</span>
+                        </h3>
+                    </div>
+                </div>
+                <div class="flex items-center space-x-3">
+                    <button onclick="toggleFav(event, '{}')" class="w-8 h-8 rounded-full bg-white/50 flex items-center justify-center hover:bg-white shadow-sm transition-all">
+                        <svg id="fav-{}" class="w-5 h-5 {}" viewBox="0 0 20 20" stroke="currentColor" stroke-width="1.5" fill="none"><path stroke-linecap="round" stroke-linejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"></path></svg>
+                    </button>
+                    <div class="active-anim space-x-1" style="display: {};">
+                        <div class="w-1.5 h-4 bg-pink-400 rounded-full animate-bounce" style="animation-delay: 0s;"></div>
+                        <div class="w-1.5 h-5 bg-pink-400 rounded-full animate-bounce" style="animation-delay: 0.1s;"></div>
+                        <div class="w-1.5 h-3 bg-pink-400 rounded-full animate-bounce" style="animation-delay: 0.2s;"></div>
+                    </div>
+                </div>
+            </div>
+        "#, safe_id, pack, active_card_class, display_name, active_badge, pack, safe_id, fav_class, active_anim);
+        
+        packs_html.push_str(&card);
+    }
+    
+    let current_vol = VOL.load(Ordering::Relaxed).to_string();
+    let final_html = html_template
+        .replace("<!-- PACKS_LIST -->", &packs_html)
+        .replace("<!-- VOL_VALUE -->", &current_vol);
+
+    let _webview = WebViewBuilder::new(&window)
+        .with_devtools(true)
+        .with_html(final_html)
+        .with_ipc_handler(move |req: wry::http::Request<String>| {
+            if let Ok(msg) = serde_json::from_str::<IpcMessage>(req.body()) {
+                match msg.r#type.as_str() {
+                    "set_volume" => {
+                        if let Some(val) = msg.value {
+                            if let Some(v) = val.as_u64() {
+                                VOL.store(v as u32, Ordering::Relaxed);
+                                save_settings(&ipc_packs_dir.join(".settings.json"), v as u32, &*ipc_current_pack_name.read().unwrap());
                             }
-                        });
-                    } else {
-                        // No packs left!
-                        *current_pack.write().unwrap() = None;
+                        }
+                    }"select_pack" => {
+                        if let Some(val) = msg.value {
+                            if let Some(p) = val.as_str() {
+                                *ipc_current_pack_name.write().unwrap() = p.to_string();
+                                save_settings(&ipc_packs_dir.join(".settings.json"), VOL.load(Ordering::Relaxed), p);
+                                if let Some(loaded) = load_pack(&ipc_packs_dir.join(p)) {
+                                    *ipc_current_pack.write().unwrap() = Some(loaded);
+                                }
+                            }
+                        }
                     }
-                }
-            } else if id.starts_with("pack_") {
-                let pack_name = id[5..].to_string();
-                *current_pack_name.write().unwrap() = pack_name.clone();
-                for (name, item) in &pack_items {
-                    item.set_checked(name == &pack_name);
-                }
-                
-                        save_settings(&packs_dir.join(".settings.json"), VOL.load(std::sync::atomic::Ordering::Relaxed), &pack_name);
-                if favorites.contains(&pack_name) {
-                    toggle_fav_item.set_text("❌ Remove from Favorites");
-                } else {
-                    toggle_fav_item.set_text("⭐ Mark as Favorite");
-                }
-                
-                let cp = current_pack.clone();
-                let pd = packs_dir.clone();
-                thread::spawn(move || {
-                    if let Some(loaded) = load_pack(&pd.join(&pack_name)) {
-                        *cp.write().unwrap() = Some(loaded);
+                    "toggle_fav" => {
+                        if let Some(val) = msg.value {
+                            if let Some(p) = val.as_str() {
+                                let mut favs = ipc_favorites.write().unwrap();
+                                if favs.contains(p) {
+                                    favs.remove(p);
+                                } else {
+                                    favs.insert(p.to_string());
+                                }
+                                if let Ok(json) = serde_json::to_string(&*favs) {
+                                    let _ = fs::write(ipc_packs_dir.join(".favorites.json"), json);
+                                }
+                            }
+                        }
                     }
-                });
+                    "quit" => {
+                        std::process::exit(0);
+                    }
+                    _ => {}
+                    _ => {}
+                }
             }
+        })
+        .build()
+        .unwrap();
+
+    let mut modifiers = tao::keyboard::ModifiersState::empty();
+
+    event_loop.run(move |event, event_loop_target, control_flow| {
+        *control_flow = ControlFlow::Wait;
+
+        match event {
+            Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
+                #[cfg(target_os = "macos")]
+                {
+                    use tao::platform::macos::EventLoopWindowTargetExtMacOS;
+                    let _ = event_loop_target.hide_application();
+                }
+            },
+            Event::WindowEvent { event: WindowEvent::ModifiersChanged(state), .. } => {
+                modifiers = state;
+            },
+            Event::WindowEvent {
+                event: WindowEvent::KeyboardInput {
+                    event: tao::event::KeyEvent {
+                        logical_key: tao::keyboard::Key::Character(c),
+                        ..
+                    },
+                    ..
+                },
+                ..
+            } if c == "q" && modifiers.contains(tao::keyboard::ModifiersState::SUPER) => {
+                *control_flow = ControlFlow::Exit;
+            }
+            _ => {}
+                    _ => {}
         }
     });
 }

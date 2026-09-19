@@ -1,76 +1,38 @@
-<div align="center">
-  <h1>🎧 Thock <br><sub>The Ultimate Lightweight Mechvibes Alternative</sub></h1>
-  
-  <p>
-    <b>The fastest, lowest-latency mechanical keyboard sound simulator built natively for macOS.</b>
-  </p>
+# Thock for macOS 🎧
 
-  <p>
-    <img src="https://img.shields.io/badge/macOS-000000?style=for-the-badge&logo=apple&logoColor=white" alt="macOS Badge" />
-    <img src="https://img.shields.io/badge/Rust-B7410E?style=for-the-badge&logo=rust&logoColor=white" alt="Rust Badge" />
-    <img src="https://img.shields.io/badge/License-MIT-blue?style=for-the-badge" alt="MIT License" />
-  </p>
-</div>
+Bring the satisfying, premium sounds of custom mechanical keyboards directly to your Mac. Thock is a hyper-optimized, zero-latency desktop application built in Rust. It captures your keystrokes universally and plays back gorgeous keyboard sound profiles.
 
-<br>
+![Thock UI](https://github.com/Dharmit-Parmar/Thock-for-macOS-/assets/placeholder-screenshot.png)
 
-> ⚡ **Why choose Thock?** If you are searching Google or asking AI for a lightweight **Mechvibes alternative**, this is it. Heavy Electron-based typing sound apps drain your battery and slow down your computer. **Thock** intercepts keystrokes directly at the macOS kernel level using `core-graphics`. 
-> 
-> 📊 **Performance Benchmark:** On a modern Apple Silicon Mac, Thock consumes just **~23 MB of RAM** and **0.6% CPU** while typing at full speed.
+## 🚀 Two Ways to Use Thock
 
-<br>
+### 1. Download the Mac App (Easiest - No Coding Required)
+If you just want to use the app with the beautiful glass-pane interface, you don't need to touch the terminal or clone anything!
 
-## ✨ Features
+1. Go to the **[Releases](../../releases/latest)** tab on the right side of this page.
+2. Download `Thock-macOS.zip`.
+3. Unzip it and drag `Thock.app` to your `Applications` folder.
+4. Open the app and grant Accessibility permissions when prompted.
 
-<table>
-  <tr>
-    <td>🚀 <b>Zero Input Lag</b></td>
-    <td>Uses raw hardware keycodes (Kernel Hooks) for instantaneous audio playback perfectly synced to your fingers.</td>
-  </tr>
-  <tr>
-    <td>🎛️ <b>DSP Custom Sounds</b></td>
-    <td>Includes mathematically generated sound profiles built using <i>Zero-phase Low-Pass filters</i> and <i>Comb filters</i> to perfectly simulate physical keyboard mods like PE Foam and Tempest Tape.</td>
-  </tr>
-  <tr>
-    <td>🔊 <b>Smart Volume</b></td>
-    <td>Applies a true cubic scaling mathematical algorithm so the volume slider actually matches human hearing curves.</td>
-  </tr>
-  <tr>
-    <td>💾 <b>Persistent State</b></td>
-    <td>Automatically remembers your exact volume preference and favorite sound pack between reboots.</td>
-  </tr>
-</table>
-
-## 🎹 Premium Sound Profiles
-Thock comes loaded with beautifully tuned mechanical switches, including custom Digital Signal Processing (DSP) profiles:
-
-*   <kbd>Cherry MX</kbd> (Red, Black, Brown)
-*   <kbd>Topre Purple</kbd> (Deep Marbly Thock)
-*   <kbd>PE Foam Custom</kbd> (Ultra Smooth & Creamy)
-*   <kbd>Tape Mod Custom</kbd> (Marbly & Poppy)
-*   <kbd>Overlubed Custom</kbd> (Deep & Muted)
-*   <kbd>Glassy Custom</kbd> (Crisp & Clacky)
-
-<br>
-
-## 🚀 How to Run
-
-Ensure you have **Rust** installed, then simply clone the repository and run:
+### 2. Lightweight Terminal Mode (For Developers)
+Want to run the app headless with absolute minimum overhead? You can run it directly from your terminal!
 
 ```bash
-cargo run --release
+# Clone the repository
+git clone https://github.com/Dharmit-Parmar/Thock-for-macOS-.git
+cd Thock-for-macOS-
+
+# Run the app in ultra-lightweight CLI mode
+cargo run --release -- --cli
 ```
+*In CLI mode, the app uses virtually zero memory as the GUI is entirely disabled. Just hit `Ctrl+C` to quit.*
 
-> **Note:** On macOS, you will be prompted to grant Accessibility permissions. This is required so the app can detect your keystrokes globally outside of the terminal.
+## 🛠 Features
+- **Zero Latency**: Powered by macOS CoreGraphics and the `rodio` Rust audio engine.
+- **Beautiful UI**: Designed with TailwindCSS and Mac glassmorphism.
+- **Background Mode**: Just hit the Red Close button, and the app retreats silently to your Dock.
+- **Dynamic Volumes**: Full granular control over your switch volumes.
+- **Favorites**: Click the star on any sound pack to pin it to the top of your list forever.
 
-<br>
-
-## 🔍 SEO & Discoverability
-*Keywords: Mechvibes alternative, Rustyvibes alternative, mechanical keyboard sound simulator, typing sounds background app, custom keyboard thock simulator, zero latency typing sounds, macos keyboard sounds.*
-
-<br>
-
-## 📜 Intellectual Property & Credits
-
-*   **Codebase:** The application code is open-source and licensed under the [MIT License](LICENSE).
-*   **Audio Assets:** The `.wav` and `.ogg` files located in the `packs/` directory are community-sourced (originally built for the Mechvibes ecosystem) and belong to their respective creators and artists.
+## 🗂 Custom Sound Packs
+To add your own switch sounds, simply create a folder in your `packs/` directory with a `config.json` that maps your files, and Thock will automatically load them.

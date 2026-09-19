@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Thock - Sound Packs</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+            overflow: hidden;
+            /* Soft pink gradient background */
+            background: linear-gradient(-45deg, #fbc2eb, #f9c1b1, #ffecd2, #fbc2eb);
+            background-size: 400% 400%;
+            animation: gradientBG 15s ease infinite;
+        }
+
+        @keyframes gradientBG {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.4);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.6);
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.1);
+        }
+
+        .glass-card {
+            background: rgba(255, 255, 255, 0.5);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.7);
+            transition: all 0.3s ease;
+        }
+
+        .glass-card:hover {
+            transform: translateY(-2px);
+            background: rgba(255, 255, 255, 0.7);
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.05);
+        }
+
+        .glass-button {
+            background: rgba(255, 255, 255, 0.5);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.8);
+            transition: all 0.2s ease;
+        }
+
+        .glass-button:hover {
+            background: rgba(255, 255, 255, 0.8);
+            transform: scale(1.02);
+        }
+
+        .glass-button:active {
+            transform: scale(0.98);
+        }
+
+        /* Custom range slider styling */
+        input[type=range] {
+            -webkit-appearance: none;
+            width: 100%;
+            background: transparent;
+        }
+
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 16px;
+            width: 16px;
+            border-radius: 50%;
+            background: #ffffff;
+            cursor: pointer;
+            margin-top: -6px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+            border: 1px solid rgba(0,0,0,0.1);
+        }
+
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 4px;
+            cursor: pointer;
+            background: rgba(255, 255, 255, 0.6);
+            border-radius: 2px;
+            border: 1px solid rgba(255, 255, 255, 0.8);
+        }
+        
+        /* Scrollbar styling */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.6);
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.8);
+        }
+    </style>
+</head>
+<body class="w-screen h-screen overflow-hidden flex flex-col md:flex-row m-0 p-0">
+
+    <div class="glass-panel w-full max-w-6xl h-full max-h-[800px] rounded-3xl flex flex-col md:flex-row overflow-hidden">
+        
+        <!-- Sidebar -->
+        <aside class="w-full md:w-72 border-r border-white/60 p-6 flex flex-col flex-shrink-0">
+            <div class="flex items-center space-x-4 mb-8">
+                
+                <h1 class="text-3xl font-bold text-gray-800 tracking-tight">Thock</h1>
+            </div>
+
+            <div class="flex-grow space-y-8">
+                <!-- Volume Control -->
+                <div class="space-y-3">
+                    <div class="flex justify-between items-center"><label class="text-sm font-semibold text-gray-700 uppercase tracking-wider">Master Volume</label><span id="vol-display" class="text-xs font-bold text-pink-500 bg-white/60 px-2 py-1 rounded-md shadow-sm"><!-- VOL_VALUE -->%</span></div>
+                    <div class="flex items-center space-x-3">
+                        <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"></path></svg>
+                        <input type="range" min="0" max="100" value="<!-- VOL_VALUE -->" class="flex-grow" oninput="setVolume(this.value)">
+                    </div>
+                </div>
+                
+                <!-- Settings/Actions -->
+                <div class="space-y-3">
+                    <label class="text-sm font-semibold text-gray-700 uppercase tracking-wider">Actions</label>
+                    <button class="glass-button w-full py-2.5 px-4 rounded-xl text-red-500 font-medium flex items-center justify-center space-x-2 shadow-sm">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                        <span>Delete Pack</span>
+                    </button>
+                </div>
+            </div>
+            
+            <div class="mt-auto pt-6 text-xs text-gray-500 text-center">
+                v2.0.0
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="flex-grow p-8 flex flex-col h-full overflow-hidden">
+            <header class="mb-8 flex justify-between items-end">
+                <div>
+                    <h2 class="text-2xl font-bold text-gray-800">Sound Packs</h2>
+                    <p class="text-gray-600 mt-1">Select a switch profile to hear the thock.</p>
+                </div>
+                <button class="glass-button py-2 px-4 rounded-xl text-gray-700 font-medium flex items-center space-x-2 shadow-sm">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                    <span>Import Pack</span>
+                </button>
+            </header>
+
+            <div class="mb-6">
+                <textarea id="sound-tester" placeholder="Type here to test sounds..." class="w-full bg-gray-900 text-pink-400 font-mono rounded-2xl p-4 resize-none shadow-inner focus:outline-none focus:ring-2 focus:ring-pink-400 placeholder-gray-600 border border-gray-800 transition-all" rows="2" oninput="resetTestBox()"></textarea>
+            </div>
+
+            <div class="flex-grow overflow-y-auto pr-2 space-y-4">
+                
+                <!-- PACKS_LIST -->
+            </div>
+        </main>
+    </div>
+
+
+    <script>
+function safeIpc(msg) {
+            try {
+                if (window.ipc && window.ipc.postMessage) {
+                    window.ipc.postMessage(JSON.stringify(msg));
+                } else {
+                    console.error("IPC missing");
+                }
+            } catch (e) {}
+        }
+
+        function setVolume(val) {
+            const display = document.getElementById('vol-display');
+            if (display) display.innerText = val + '%';
+            safeIpc({ type: "set_volume", value: parseInt(val) });
+        }
+        
+        let testBoxTimer;
+        function resetTestBox() {
+            const box = document.getElementById('sound-tester');
+            clearTimeout(testBoxTimer);
+            testBoxTimer = setTimeout(() => {
+                box.value = '';
+            }, 800);
+        }
+        
+        function selectPack(packName) {
+            safeIpc({ type: "select_pack", value: packName });
+            
+            document.querySelectorAll('.pack-card').forEach(card => {
+                card.classList.remove('border-pink-400', 'bg-white/70', 'shadow-md');
+                card.classList.add('bg-white/40');
+                const badge = card.querySelector('.active-badge');
+                if (badge) badge.style.display = 'none';
+                const anim = card.querySelector('.active-anim');
+                if (anim) anim.style.display = 'none';
+            });
+            
+            const safeId = 'pack-' + packName.replace(/[^a-zA-Z0-9]/g, '_');
+            const activeCard = document.getElementById(safeId);
+            if (activeCard) {
+                activeCard.classList.remove('bg-white/40');
+                activeCard.classList.add('border-pink-400', 'bg-white/70', 'shadow-md');
+                const badge = activeCard.querySelector('.active-badge');
+                if (badge) badge.style.display = 'inline-block';
+                const anim = activeCard.querySelector('.active-anim');
+                if (anim) anim.style.display = 'flex';
+            }
+        }
+        
+        function toggleFav(e, packName) {
+            e.stopPropagation();
+            safeIpc({ type: "toggle_fav", value: packName });
+            const safeId = 'fav-' + packName.replace(/[^a-zA-Z0-9]/g, '_');
+            const star = document.getElementById(safeId);
+            if (star) {
+                if (star.classList.contains('text-yellow-400')) {
+                    star.classList.remove('text-yellow-400', 'fill-current');
+                    star.classList.add('text-gray-400');
+                } else {
+                    star.classList.remove('text-gray-400');
+                    star.classList.add('text-yellow-400', 'fill-current');
+                }
+            }
+        }
+        
+        document.addEventListener('keydown', (e) => {
+            if (e.metaKey && e.key.toLowerCase() === 'q') {
+                safeIpc({ type: "quit" });
+            }
+        });
+</script>
+</body>
+
+
+</html>
