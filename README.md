@@ -1,8 +1,10 @@
-# Thock for macOS 🎧
+<p align="center">
+  <img src="https://github.com/Dharmit-Parmar/Thock-for-macOS-/raw/main/thock_app_icon_1789644171932.jpg" alt="Thock Logo" width="200" style="border-radius: 20px;"/>
+</p>
+
+<h1 align="center">Thock for macOS 🎧</h1>
 
 Bring the satisfying, premium sounds of custom mechanical keyboards directly to your Mac. Thock is a hyper-optimized, zero-latency desktop application built in Rust. It captures your keystrokes universally and plays back gorgeous keyboard sound profiles.
-
-![Thock UI](https://github.com/Dharmit-Parmar/Thock-for-macOS-/assets/placeholder-screenshot.png)
 
 ## 🚀 Two Ways to Use Thock
 
@@ -11,7 +13,15 @@ If you just want to use the app with the beautiful glass-pane interface, you don
 
 1. **[Click here to download Thock-macOS.zip](https://github.com/Dharmit-Parmar/Thock-for-macOS-/raw/main/Thock-macOS.zip)**
 2. Unzip it and drag `Thock.app` to your `Applications` folder.
-3. Open the app and grant Accessibility permissions when prompted.
+3. Open the app. 
+
+### ⚙️ macOS Accessibility Permissions (Required)
+Because Thock needs to listen for your keystrokes globally to play sounds, macOS requires you to grant it Accessibility permissions.
+
+1. Open **System Settings** -> **Privacy & Security** -> **Accessibility**.
+2. Toggle the switch ON for **Thock**.
+3. *(If you don't see it, click the `+` button at the bottom, navigate to your Applications folder, and select Thock.app).*
+4. **Restart the app** if needed!
 
 ### 2. Lightweight Terminal Mode (For Developers)
 Want to run the app headless with absolute minimum overhead? You can run it directly from your terminal!
