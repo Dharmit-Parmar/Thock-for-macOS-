@@ -9,10 +9,9 @@ Bring the satisfying, premium sounds of custom mechanical keyboards directly to 
 ### 1. Download the Mac App (Easiest - No Coding Required)
 If you just want to use the app with the beautiful glass-pane interface, you don't need to touch the terminal or clone anything!
 
-1. Go to the **[Releases](../../releases/latest)** tab on the right side of this page.
-2. Download `Thock-macOS.zip`.
-3. Unzip it and drag `Thock.app` to your `Applications` folder.
-4. Open the app and grant Accessibility permissions when prompted.
+1. **[Click here to download Thock-macOS.zip](https://github.com/Dharmit-Parmar/Thock-for-macOS-/raw/main/Thock-macOS.zip)**
+2. Unzip it and drag `Thock.app` to your `Applications` folder.
+3. Open the app and grant Accessibility permissions when prompted.
 
 ### 2. Lightweight Terminal Mode (For Developers)
 Want to run the app headless with absolute minimum overhead? You can run it directly from your terminal!
