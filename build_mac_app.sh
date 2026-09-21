@@ -21,7 +21,7 @@ mkdir -p "${MACOS_DIR}"
 mkdir -p "${RESOURCES_DIR}"
 
 echo "Copying binary and sound packs..."
-cp target/release/thock "${MACOS_DIR}/Thock"
+cp target/release/thock-app "${MACOS_DIR}/Thock"
 cp -r packs "${RESOURCES_DIR}/packs"
 cp AppIcon.icns "${RESOURCES_DIR}/AppIcon.icns"
 

@@ -1,19 +1,5 @@
-# Rust build artifacts
-target/
-**/*.rs.bk
-
-# OS junk
+/target/
+*.bak
+*.zip
+Thock.app/
 .DS_Store
-.AppleDouble
-.LSOverride
-Icon
-._*
-.Trashes
-
-# Logs
-*.log
-/tmp/*.log
-
-# User settings / favorites
-packs/.favorites
-packs/.settings.json

@@ -2,6 +2,7 @@
 name = "thock"
 version = "0.1.0"
 edition = "2021"
+default-run = "thock-app"
 
 [dependencies]
 crossbeam-channel = "0.5.17"
