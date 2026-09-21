@@ -18,11 +18,7 @@ use std::{
     thread,
 };
 
-use tao::event::{Event, WindowEvent};
-use tao::event_loop::{ControlFlow, EventLoop};
-use tao::window::WindowBuilder;
 
-use wry::WebViewBuilder;
 
 #[cfg(target_os = "macos")]
 extern "C" {
@@ -158,13 +154,26 @@ struct IpcMessage {
 }
 
 pub fn run(is_cli: bool) {
-    let current_exe = std::env::current_exe().unwrap();
-    let exe_dir = current_exe.parent().unwrap();
+    std::panic::set_hook(Box::new(|info| {
+        let msg = match info.payload().downcast_ref::<&'static str>() {
+            Some(s) => *s,
+            None => match info.payload().downcast_ref::<String>() {
+                Some(s) => &s[..],
+                None => "Box<dyn Any>",
+            },
+        };
+        eprintln!("🔥 CRITICAL THREAD PANIC: {}", msg);
+        if let Some(loc) = info.location() {
+            eprintln!("Location: {}:{}", loc.file(), loc.line());
+        }
+    }));
+    let exe_dir = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let exe_dir = exe_dir.parent().unwrap_or(std::path::Path::new("."));
     
     let packs_dir = if exe_dir.ends_with("MacOS") {
-        exe_dir.parent().unwrap().join("Resources").join("packs")
+        exe_dir.parent().unwrap_or(std::path::Path::new(".")).join("Resources").join("packs")
     } else {
-        std::env::current_dir().unwrap().join("packs")
+        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")).join("packs")
     };
     
     let _ = fs::create_dir_all(&packs_dir);
@@ -292,10 +301,14 @@ pub fn run(is_cli: bool) {
 
         match tap_res {
             Ok(tap) => {
-                let source = tap.mach_port.create_runloop_source(0).unwrap();
-                CFRunLoop::get_current().add_source(&source, unsafe { core_foundation::runloop::kCFRunLoopCommonModes });
-                tap.enable();
-                unsafe { core_foundation::runloop::CFRunLoopRun() };
+                match tap.mach_port.create_runloop_source(0) {
+                    Ok(source) => {
+                        CFRunLoop::get_current().add_source(&source, unsafe { core_foundation::runloop::kCFRunLoopCommonModes });
+                        tap.enable();
+                        unsafe { core_foundation::runloop::CFRunLoopRun() };
+                    }
+                    Err(e) => eprintln!("Failed to create runloop source (Mach port limit reached?): {:?}", e),
+                }
             }
             Err(e) => eprintln!("Event tap error: {:?}", e),
         }
@@ -444,240 +457,278 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
         thread::spawn(audio_thread);
     }
 
-    let event_loop = EventLoop::new();
-    let window = WindowBuilder::new()
-        .with_title("Thock")
-        .with_inner_size(tao::dpi::LogicalSize::new(800.0, 600.0))
-        .build(&event_loop)
-        .unwrap();
-
-    let ipc_current_pack = current_pack.clone();
-    let ipc_current_pack_name = current_pack_name.clone();
-    let ipc_packs_dir = packs_dir.clone();
-    let ipc_favorites = favorites.clone();
-
-    let html_template = include_str!("../ui.html");
+    let event_loop = tao::event_loop::EventLoop::new();
     
-    let mut packs_html = String::new();
-    let current_pack_read = ipc_current_pack_name.read().unwrap().clone();
-    let favs = favorites.read().unwrap().clone();
-    
-    let mut sorted_packs = available_packs.clone();
-    sorted_packs.sort_by(|a, b| {
-        let a_fav = favs.contains(a);
-        let b_fav = favs.contains(b);
-        b_fav.cmp(&a_fav).then(a.cmp(b))
-    });
-    
-    for pack in &sorted_packs {
-        let is_active = *pack == current_pack_read;
-        let is_fav = favs.contains(pack);
-        
-        let active_badge = if is_active {
-            r#"inline-block"#
-        } else { "none" };
-        
-        let active_card_class = if is_active { "border-pink-400 bg-white/70 shadow-md" } else { "bg-white/40" };
-        let active_anim = if is_active { "flex" } else { "none" };
-        
-        let fav_class = if is_fav { "text-yellow-400 fill-current" } else { "text-gray-400" };
+    // UI Builder function to allow dynamic recreation of the window and webview
+    // without leaking 200MB of WebKit memory when the window is closed.
+    fn build_ui(
+        event_loop: &tao::event_loop::EventLoopWindowTarget<()>,
+        ipc_current_pack_name: std::sync::Arc<std::sync::RwLock<String>>,
+        ipc_current_pack: std::sync::Arc<std::sync::RwLock<Option<crate::LoadedPack>>>,
+        ipc_packs_dir: std::path::PathBuf,
+        ipc_favorites: std::sync::Arc<std::sync::RwLock<std::collections::HashSet<String>>>,
+        available_packs: &[String],
+    ) -> (tao::window::Window, wry::WebView) {
+        let window = tao::window::WindowBuilder::new()
+            .with_title("Thock")
+            .with_inner_size(tao::dpi::LogicalSize::new(800.0, 600.0))
+            .build(event_loop)
+            .unwrap();
 
-        let display_name = pack.replace("_", " ").to_uppercase();
-        let safe_id = pack.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect::<String>();
+        let html_template = include_str!("../ui.html");
+        
+        let mut packs_html = String::new();
+        let current_pack_read = ipc_current_pack_name.read().unwrap().clone();
+        let favs = ipc_favorites.read().unwrap().clone();
+        
+        let mut sorted_packs = available_packs.to_vec();
+        sorted_packs.sort_by(|a, b| {
+            let a_fav = favs.contains(a);
+            let b_fav = favs.contains(b);
+            b_fav.cmp(&a_fav).then(a.cmp(b))
+        });
+        
+        for pack in &sorted_packs {
+            let is_active = *pack == current_pack_read;
+            let is_fav = favs.contains(pack);
+            
+            let active_badge = if is_active {
+                r#"inline-block"#
+            } else { "none" };
+            
+            let active_card_class = if is_active { "border-pink-400 bg-white/70 shadow-md" } else { "bg-white/40" };
+            let active_anim = if is_active { "flex" } else { "none" };
+            
+            let fav_class = if is_fav { "text-yellow-400 fill-current" } else { "text-gray-400" };
 
-        let card = format!(r#"
-            <div id="pack-{}" onclick="selectPack('{}')" class="pack-card glass-card py-3.5 px-5 rounded-2xl cursor-pointer flex items-center justify-between group {} transition-all hover:bg-white/60 mb-2.5 border border-white/20">
-                <div class="flex items-center space-x-3.5">
-                    <div class="w-10 h-10 rounded-full bg-pink-50 flex items-center justify-center shadow-sm text-pink-500">
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"></path></svg>
+            let display_name = pack.replace("_", " ").to_uppercase();
+            let safe_id = pack.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect::<String>();
+
+            let card = format!(r#"
+                <div id="pack-{}" onclick="selectPack('{}')" class="pack-card glass-card py-3.5 px-5 rounded-2xl cursor-pointer flex items-center justify-between group {} transition-all hover:bg-white/60 mb-2.5 border border-white/20">
+                    <div class="flex items-center space-x-3.5">
+                        <div class="w-10 h-10 rounded-full bg-pink-50 flex items-center justify-center shadow-sm text-pink-500">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"></path></svg>
+                        </div>
+                        <div>
+                            <h3 class="font-bold text-gray-800 text-base flex items-center">
+                                {}
+                                <span class="active-badge ml-2 px-2 py-0.5 rounded-md bg-pink-200 text-pink-700 text-xs font-semibold tracking-wide uppercase" style="display: {}">Active</span>
+                            </h3>
+                        </div>
                     </div>
-                    <div>
-                        <h3 class="font-bold text-gray-800 text-base flex items-center">
-                            {}
-                            <span class="active-badge ml-2 px-2 py-0.5 rounded-md bg-pink-200 text-pink-700 text-xs font-semibold tracking-wide uppercase" style="display: {}">Active</span>
-                        </h3>
+                    <div class="flex items-center space-x-3">
+                        <button onclick="toggleFav(event, '{}')" class="w-8 h-8 rounded-full bg-white/50 flex items-center justify-center hover:bg-white shadow-sm transition-all">
+                            <svg id="fav-{}" class="w-5 h-5 {}" viewBox="0 0 20 20" stroke="currentColor" stroke-width="1.5" fill="none"><path stroke-linecap="round" stroke-linejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"></path></svg>
+                        </button>
+                        <div class="active-anim space-x-1" style="display: {};">
+                            <div class="w-1.5 h-4 bg-pink-400 rounded-full animate-bounce" style="animation-delay: 0s;"></div>
+                            <div class="w-1.5 h-5 bg-pink-400 rounded-full animate-bounce" style="animation-delay: 0.1s;"></div>
+                            <div class="w-1.5 h-3 bg-pink-400 rounded-full animate-bounce" style="animation-delay: 0.2s;"></div>
+                        </div>
                     </div>
                 </div>
-                <div class="flex items-center space-x-3">
-                    <button onclick="toggleFav(event, '{}')" class="w-8 h-8 rounded-full bg-white/50 flex items-center justify-center hover:bg-white shadow-sm transition-all">
-                        <svg id="fav-{}" class="w-5 h-5 {}" viewBox="0 0 20 20" stroke="currentColor" stroke-width="1.5" fill="none"><path stroke-linecap="round" stroke-linejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"></path></svg>
-                    </button>
-                    <div class="active-anim space-x-1" style="display: {};">
-                        <div class="w-1.5 h-4 bg-pink-400 rounded-full animate-bounce" style="animation-delay: 0s;"></div>
-                        <div class="w-1.5 h-5 bg-pink-400 rounded-full animate-bounce" style="animation-delay: 0.1s;"></div>
-                        <div class="w-1.5 h-3 bg-pink-400 rounded-full animate-bounce" style="animation-delay: 0.2s;"></div>
-                    </div>
-                </div>
-            </div>
-        "#, safe_id, pack, active_card_class, display_name, active_badge, pack, safe_id, fav_class, active_anim);
+            "#, safe_id, pack, active_card_class, display_name, active_badge, pack, safe_id, fav_class, active_anim);
+            
+            packs_html.push_str(&card);
+        }
         
-        packs_html.push_str(&card);
-    }
-    
-    let mut packs_options = String::new();
-    for pack in &sorted_packs {
-        let display_name = pack.replace("_", " ").to_uppercase();
-        let selected = if &current_pack_read == pack { "selected" } else { "" };
-        packs_options.push_str(&format!("<option value='{}' {}>{}</option>", pack, selected, display_name));
-    }
-    
-    let current_vol = VOL.load(Ordering::Relaxed).to_string();
-    let final_html = html_template
-        .replace("<!-- PACKS_LIST -->", &packs_html)
-        .replace("<!-- VOL_VALUE -->", &current_vol)
-        .replace("<!-- PACK_OPTIONS -->", &packs_options);
+        let mut packs_options = String::new();
+        for pack in &sorted_packs {
+            let display_name = pack.replace("_", " ").to_uppercase();
+            let selected = if &current_pack_read == pack { "selected" } else { "" };
+            packs_options.push_str(&format!("<option value='{}' {}>{}</option>", pack, selected, display_name));
+        }
+        
+        let ax_trusted = unsafe { AXIsProcessTrusted() };
+        let ax_banner = if !ax_trusted {
+            r#"<div class="bg-red-500/90 text-white p-3 rounded-xl mb-4 text-center font-semibold shadow-lg border border-red-400">
+                ⚠️ Accessibility permissions not granted. Keypresses will not be detected. Enable in System Settings &gt; Privacy &amp; Security &gt; Accessibility.
+            </div>"#
+        } else { "" };
+        
+        let current_vol = VOL.load(std::sync::atomic::Ordering::Relaxed).to_string();
+        let final_html = html_template
+            .replace("<!-- PACKS_LIST -->", &packs_html)
+            .replace("<!-- VOL_VALUE -->", &current_vol)
+            .replace("<!-- PACK_OPTIONS -->", &packs_options)
+            .replace("<!-- AX_WARNING -->", ax_banner);
 
-    let _webview = WebViewBuilder::new(&window)
-        .with_devtools(true)
-        .with_html(final_html)
-        .with_ipc_handler(move |req: wry::http::Request<String>| {
-            if let Ok(msg) = serde_json::from_str::<IpcMessage>(req.body()) {
-                match msg.r#type.as_str() {
-                    "set_volume" => {
-                        if let Some(val) = msg.value {
-                            if let Some(v) = val.as_u64() {
-                                VOL.store(v as u32, Ordering::Relaxed);
-                                save_settings(&ipc_packs_dir.join(".settings.json"), v as u32, &*ipc_current_pack_name.read().unwrap());
-                            }
-                        }
-                    }"select_pack" => {
-                        if let Some(val) = msg.value {
-                            if let Some(p) = val.as_str() {
-                                *ipc_current_pack_name.write().unwrap() = p.to_string();
-                                save_settings(&ipc_packs_dir.join(".settings.json"), VOL.load(Ordering::Relaxed), p);
-                                if let Some(loaded) = load_pack(&ipc_packs_dir.join(p)) {
-                                    *ipc_current_pack.write().unwrap() = Some(loaded);
+        let ipc_packs_dir_clone = ipc_packs_dir.clone();
+        
+        let webview = wry::WebViewBuilder::new(&window)
+            .with_devtools(true)
+            .with_html(final_html)
+            .with_ipc_handler(move |req: wry::http::Request<String>| {
+                if let Ok(msg) = serde_json::from_str::<IpcMessage>(req.body()) {
+                    match msg.r#type.as_str() {
+                        "set_volume" => {
+                            if let Some(val) = msg.value {
+                                if let Some(v) = val.as_u64() {
+                                    VOL.store(v as u32, std::sync::atomic::Ordering::Relaxed);
+                                    save_settings(&ipc_packs_dir_clone.join(".settings.json"), v as u32, &*ipc_current_pack_name.read().unwrap());
                                 }
                             }
-                        }
-                    }
-                    "toggle_fav" => {
-                        if let Some(val) = msg.value {
-                            if let Some(p) = val.as_str() {
-                                let mut favs = ipc_favorites.write().unwrap();
-                                if favs.contains(p) {
-                                    favs.remove(p);
-                                } else {
-                                    favs.insert(p.to_string());
-                                }
-                                if let Ok(json) = serde_json::to_string(&*favs) {
-                                    let _ = fs::write(ipc_packs_dir.join(".favorites.json"), json);
-                                }
-                            }
-                        }
-                    }
-                    "preview_maker" => {
-                        if let Some(val) = msg.value.as_ref() {
-                            if let (Some(base), Some(pitch), Some(vol)) = (
-                                val.get("base").and_then(|v| v.as_str()),
-                                val.get("pitch").and_then(|v| v.as_f64()),
-                                val.get("volume").and_then(|v| v.as_f64()),
-                            ) {
-                                let proc_val = val.get("procedural");
-                                let pack = if base == "__procedural__" {
-                                    LoadedPack {
-                                        defaults: vec![],
-                                        mappings: std::collections::HashMap::new(),
-                                        pitch: pitch as f32,
-                                        vol_mult: vol as f32,
-                                        procedural: proc_val.and_then(|v| serde_json::from_value(v.clone()).ok()),
+                        }"select_pack" => {
+                            if let Some(val) = msg.value {
+                                if let Some(p) = val.as_str() {
+                                    *ipc_current_pack_name.write().unwrap() = p.to_string();
+                                    save_settings(&ipc_packs_dir_clone.join(".settings.json"), VOL.load(std::sync::atomic::Ordering::Relaxed), p);
+                                    if let Some(loaded) = load_pack(&ipc_packs_dir_clone.join(p)) {
+                                        *ipc_current_pack.write().unwrap() = Some(loaded);
                                     }
-                                } else {
-                                    let base_dir = ipc_packs_dir.join(base);
-                                    let mut p = load_pack(&base_dir).unwrap_or(LoadedPack {
-                                        defaults: vec![], mappings: std::collections::HashMap::new(), pitch: 1.0, vol_mult: 1.0, procedural: None,
-                                    });
-                                    p.pitch = pitch as f32;
-                                    p.vol_mult = vol as f32;
-                                    p
-                                };
-                                *ipc_current_pack.write().unwrap() = Some(pack);
-                                *ipc_current_pack_name.write().unwrap() = "Preview".to_string();
+                                }
                             }
                         }
-                    }
-                    "save_maker" => {
-                        if let Some(val) = msg.value.as_ref() {
-                            if let (Some(name), Some(base), Some(pitch), Some(vol)) = (
-                                val.get("name").and_then(|v| v.as_str()),
-                                val.get("base").and_then(|v| v.as_str()),
-                                val.get("pitch").and_then(|v| v.as_f64()),
-                                val.get("volume").and_then(|v| v.as_f64()),
-                            ) {
-                                let new_dir = ipc_packs_dir.join(name);
-                                let _ = std::fs::create_dir_all(&new_dir);
-                                
-                                let proc_val = val.get("procedural");
-                                
-                                if base == "__procedural__" {
-                                    let config = PackConfig {
-                                        defaults: vec![],
-                                        mappings: std::collections::HashMap::new(),
-                                        pitch: pitch as f32,
-                                        vol_mult: vol as f32,
-                                        base: Some(base.to_string()),
-                                        procedural: proc_val.and_then(|v| serde_json::from_value(v.clone()).ok()),
+                        "toggle_fav" => {
+                            if let Some(val) = msg.value {
+                                if let Some(p) = val.as_str() {
+                                    let mut favs = ipc_favorites.write().unwrap();
+                                    if favs.contains(p) {
+                                        favs.remove(p);
+                                    } else {
+                                        favs.insert(p.to_string());
+                                    }
+                                    if let Ok(json) = serde_json::to_string(&*favs) {
+                                        let _ = std::fs::write(ipc_packs_dir_clone.join(".favorites.json"), json);
+                                    }
+                                }
+                            }
+                        }
+                        "preview_maker" => {
+                            if let Some(val) = msg.value.as_ref() {
+                                if let (Some(base), Some(pitch), Some(vol)) = (
+                                    val.get("base").and_then(|v| v.as_str()),
+                                    val.get("pitch").and_then(|v| v.as_f64()),
+                                    val.get("volume").and_then(|v| v.as_f64()),
+                                ) {
+                                    let proc_val = val.get("procedural");
+                                    let pack = if base == "__procedural__" {
+                                        crate::LoadedPack {
+                                            defaults: vec![],
+                                            mappings: std::collections::HashMap::new(),
+                                            pitch: pitch as f32,
+                                            vol_mult: vol as f32,
+                                            procedural: proc_val.and_then(|v| serde_json::from_value(v.clone()).ok()),
+                                        }
+                                    } else {
+                                        let base_dir = ipc_packs_dir_clone.join(base);
+                                        let mut p = load_pack(&base_dir).unwrap_or(crate::LoadedPack {
+                                            defaults: vec![], mappings: std::collections::HashMap::new(), pitch: 1.0, vol_mult: 1.0, procedural: None,
+                                        });
+                                        p.pitch = pitch as f32;
+                                        p.vol_mult = vol as f32;
+                                        p
                                     };
-                                    if let Ok(new_json) = serde_json::to_string_pretty(&config) {
-                                        let _ = std::fs::write(new_dir.join("config.json"), new_json);
-                                    }
-                                } else {
-                                    let base_dir = ipc_packs_dir.join(base);
-                                    if let Ok(entries) = std::fs::read_dir(&base_dir) {
-                                        for entry in entries.flatten() {
-                                            if entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
-                                                let file_name = entry.file_name();
-                                                let _ = std::fs::copy(entry.path(), new_dir.join(file_name));
-                                            }
-                                        }
-                                    }
-                                    if let Ok(config_str) = std::fs::read_to_string(new_dir.join("config.json")) {
-                                        if let Ok(mut config) = serde_json::from_str::<PackConfig>(&config_str) {
-                                            config.pitch = pitch as f32;
-                                            config.vol_mult = vol as f32;
-                                            config.base = Some(base.to_string());
-                                            if let Ok(new_json) = serde_json::to_string_pretty(&config) {
-                                                let _ = std::fs::write(new_dir.join("config.json"), new_json);
-                                            }
-                                        }
-                                    }
-                                }
-                                
-                                if let Some(pack) = load_pack(&new_dir) {
                                     *ipc_current_pack.write().unwrap() = Some(pack);
-                                    *ipc_current_pack_name.write().unwrap() = name.to_string();
+                                    *ipc_current_pack_name.write().unwrap() = "Preview".to_string();
                                 }
                             }
                         }
+                        "save_maker" => {
+                            if let Some(val) = msg.value.as_ref() {
+                                if let (Some(name), Some(base), Some(pitch), Some(vol)) = (
+                                    val.get("name").and_then(|v| v.as_str()),
+                                    val.get("base").and_then(|v| v.as_str()),
+                                    val.get("pitch").and_then(|v| v.as_f64()),
+                                    val.get("volume").and_then(|v| v.as_f64()),
+                                ) {
+                                    let new_dir = ipc_packs_dir_clone.join(name);
+                                    let _ = std::fs::create_dir_all(&new_dir);
+                                    
+                                    let proc_val = val.get("procedural");
+                                    
+                                    if base == "__procedural__" {
+                                        let config = PackConfig {
+                                            defaults: vec![],
+                                            mappings: std::collections::HashMap::new(),
+                                            pitch: pitch as f32,
+                                            vol_mult: vol as f32,
+                                            base: Some(base.to_string()),
+                                            procedural: proc_val.and_then(|v| serde_json::from_value(v.clone()).ok()),
+                                        };
+                                        if let Ok(new_json) = serde_json::to_string_pretty(&config) {
+                                            let _ = std::fs::write(new_dir.join("config.json"), new_json);
+                                        }
+                                    } else {
+                                        let base_dir = ipc_packs_dir_clone.join(base);
+                                        if let Ok(entries) = std::fs::read_dir(&base_dir) {
+                                            for entry in entries.flatten() {
+                                                if entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+                                                    let file_name = entry.file_name();
+                                                    let _ = std::fs::copy(entry.path(), new_dir.join(file_name));
+                                                }
+                                            }
+                                        }
+                                        if let Ok(config_str) = std::fs::read_to_string(new_dir.join("config.json")) {
+                                            if let Ok(mut config) = serde_json::from_str::<PackConfig>(&config_str) {
+                                                config.pitch = pitch as f32;
+                                                config.vol_mult = vol as f32;
+                                                config.base = Some(base.to_string());
+                                                if let Ok(new_json) = serde_json::to_string_pretty(&config) {
+                                                    let _ = std::fs::write(new_dir.join("config.json"), new_json);
+                                                }
+                                            }
+                                        }
+                                    }
+                                    
+                                    if let Some(pack) = load_pack(&new_dir) {
+                                        *ipc_current_pack.write().unwrap() = Some(pack);
+                                        *ipc_current_pack_name.write().unwrap() = name.to_string();
+                                    }
+                                }
+                            }
+                        }
+                        "quit" => {
+                            std::process::exit(0);
+                        }
+                        _ => {}
                     }
-                    "quit" => {
-                        std::process::exit(0);
-                    }
-                    _ => {}
                 }
-            }
-        })
-        .build()
-        .unwrap();
+            })
+            .build()
+            .unwrap();
+
+        (window, webview)
+    }
+
+    let mut ui = Some(build_ui(
+        &event_loop,
+        current_pack_name.clone(),
+        current_pack.clone(),
+        packs_dir.clone(),
+        favorites.clone(),
+        &available_packs
+    ));
 
     let mut modifiers = tao::keyboard::ModifiersState::empty();
 
     event_loop.run(move |event, event_loop_target, control_flow| {
-        *control_flow = ControlFlow::Wait;
+        *control_flow = tao::event_loop::ControlFlow::Wait;
 
         match event {
-            Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
-                #[cfg(target_os = "macos")]
-                {
-                    use tao::platform::macos::EventLoopWindowTargetExtMacOS;
-                    let _ = event_loop_target.hide_application();
+            tao::event::Event::WindowEvent { event: tao::event::WindowEvent::CloseRequested, .. } => {
+                // Drop the Window and WebView entirely to free ~200MB WebKit memory!
+                ui = None;
+            },
+            tao::event::Event::Reopen { .. } => {
+                // macOS Dock icon clicked! Re-create the window if it was dropped
+                if ui.is_none() {
+                    ui = Some(build_ui(
+                        event_loop_target,
+                        current_pack_name.clone(),
+                        current_pack.clone(),
+                        packs_dir.clone(),
+                        favorites.clone(),
+                        &available_packs
+                    ));
                 }
             },
-            Event::WindowEvent { event: WindowEvent::ModifiersChanged(state), .. } => {
+            tao::event::Event::WindowEvent { event: tao::event::WindowEvent::ModifiersChanged(state), .. } => {
                 modifiers = state;
             },
-            Event::WindowEvent {
-                event: WindowEvent::KeyboardInput {
+            tao::event::Event::WindowEvent {
+                event: tao::event::WindowEvent::KeyboardInput {
                     event: tao::event::KeyEvent {
                         logical_key: tao::keyboard::Key::Character(c),
                         ..
@@ -686,7 +737,7 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
                 },
                 ..
             } if c == "q" && modifiers.contains(tao::keyboard::ModifiersState::SUPER) => {
-                *control_flow = ControlFlow::Exit;
+                *control_flow = tao::event_loop::ControlFlow::Exit;
             }
             _ => {}
         }
