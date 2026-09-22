@@ -122,10 +122,14 @@ Change any parameter live in the CLI:
 | `animal_crossing_nl` | Soft, gentle Nintendo-style |
 | `steelseries_apex_pro_v2` | OmniPoint magnetic linear |
 
-### 🪟 Smart Window Memory Management (Cut RAM Usage)
+### 🪟 Smart Window Lifecycle & Memory Management
 If you are using the GUI (`thock-app`), you can drastically cut its RAM usage when you aren't actively changing settings. 
 Simply press **`Cmd + W`** or click the red close button. 
-Thock will tear down the WebKit renderer entirely — dropping RAM usage from **~150 MB** down to just **~15 MB**. Your keyboard sounds will continue playing perfectly in the background. Click the Dock icon to bring the window back instantly.
+
+Unlike most apps that just "hide" the window, Thock actually **de-initializes and drops the window and `WKWebView` objects completely**, releasing their memory back to the OS.
+- **RAM usage drops** from **~150 MB** down to just **~15 MB**.
+- The background audio engine (`CGEventTap` + `rodio` thread) continues running completely independently.
+- Clicking the Dock icon re-creates the WebView fresh on demand, instantly restoring your volume and pack state from `.settings.json`.
 
 ### ⭐ Favorites & Persistence
 Star any pack in the GUI to pin it to the top. Your active pack and volume are automatically saved and restored between launches.
