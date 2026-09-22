@@ -68,15 +68,17 @@ After this, just type `thock` from anywhere in your terminal.
 
 ---
 
-## First-Time Setup — Accessibility Permissions
+## First-Time Setup — macOS Permissions (Required)
 
-Thock needs macOS Accessibility access to listen for your keystrokes globally. This is a one-time setup.
+To play sounds instantly when you type, Thock requires permission to monitor your keystrokes globally. This requires a one-time setup in macOS System Settings. 
 
-1. Open **System Settings → Privacy & Security → Accessibility**
-2. Toggle **ON** for **Thock** or your **Terminal** app (if running via Cargo)
-3. Restart the app after granting permission
+1. Open **System Settings** → **Privacy & Security**
+2. Scroll down to **Accessibility** (and/or **Input Monitoring**)
+3. Click the `+` button, authenticate, and select **Thock.app** from your Applications folder (or toggle your Terminal app if running via Cargo)
+4. Toggle the switch **ON** for Thock
+5. **Restart Thock** for the permissions to take effect
 
-> Thock does **not** log, store, or transmit your keystrokes. The event tap only triggers local audio playback.
+> **🛡️ Privacy & Data Guarantee:** Thock operates 100% locally on your machine. It does **not** log, store, or transmit your keystrokes. The input monitoring and device access is used *strictly* to trigger the audio engine on keypress. There is no telemetry, no data collection, and no internet connection required.
 
 ---
 
