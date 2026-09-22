@@ -28,6 +28,13 @@ It ships two modes:
 
 ## Installation
 
+### Direct Download (Easiest)
+[![Download Thock.zip](https://img.shields.io/badge/Download-Thock.app.zip-brightgreen?style=for-the-badge&logo=apple&logoColor=white)](https://raw.githubusercontent.com/Dharmit-Parmar/Thock-for-macOS-/main/Thock.zip)
+
+Download the `.zip`, extract it, and drag `Thock.app` to your Applications folder.
+
+---
+
 ### Clone & Build
 
 ```bash
