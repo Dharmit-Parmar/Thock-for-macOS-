@@ -21,8 +21,8 @@ Built entirely in Rust. Zero latency. Real-time DSP engine. Lightweight by desig
 Thock is a macOS app that intercepts your keystrokes using the native CoreGraphics event tap and plays back beautiful mechanical keyboard sounds in real time — no lag, no CPU waste, no bloat.
 
 It ships two modes:
-- **`thock-app`** — A premium Glassmorphism GUI with pack browser, volume slider, and favorites
-- **`thock-cli`** — An ultra-minimal headless terminal daemon with tab-autocomplete and procedural DSP controls
+- **`thock-app`** (GUI) — A premium Glassmorphism GUI. Because it uses WebKit for rendering, it is relatively heavy (uses about **~150 MB** of RAM while open).
+- **`thock-cli`** (Headless) — An ultra-minimal terminal daemon with tab-autocomplete. Extremely lightweight (uses about **~10 MB** of RAM).
 
 ---
 
@@ -122,8 +122,10 @@ Change any parameter live in the CLI:
 | `animal_crossing_nl` | Soft, gentle Nintendo-style |
 | `steelseries_apex_pro_v2` | OmniPoint magnetic linear |
 
-### 🪟 Smart Window Memory Management
-When you close the GUI window, Thock tears down the WebKit renderer entirely — dropping RAM from ~200MB to ~15MB. Your sounds keep playing. Click the Dock icon to bring the window back instantly.
+### 🪟 Smart Window Memory Management (Cut RAM Usage)
+If you are using the GUI (`thock-app`), you can drastically cut its RAM usage when you aren't actively changing settings. 
+Simply press **`Cmd + W`** or click the red close button. 
+Thock will tear down the WebKit renderer entirely — dropping RAM usage from **~150 MB** down to just **~15 MB**. Your keyboard sounds will continue playing perfectly in the background. Click the Dock icon to bring the window back instantly.
 
 ### ⭐ Favorites & Persistence
 Star any pack in the GUI to pin it to the top. Your active pack and volume are automatically saved and restored between launches.
