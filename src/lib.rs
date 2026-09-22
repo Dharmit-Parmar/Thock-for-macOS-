@@ -282,14 +282,23 @@ pub fn run(is_cli: bool) {
         // Avoids a write-lock acquisition on every single KeyDown event.
         let epoch = Instant::now();
         let last_press_ns = Arc::new(AtomicU64::new(0));
+        let previous_flags = std::cell::Cell::new(0u64);
         let tap_res = CGEventTap::new(
             CGEventTapLocation::Session,
             CGEventTapPlacement::HeadInsertEventTap,
             CGEventTapOptions::ListenOnly,
-            vec![CGEventType::KeyDown, CGEventType::KeyUp],
+            vec![CGEventType::KeyDown, CGEventType::KeyUp, CGEventType::FlagsChanged],
             move |_proxy, event_type, cg_event| {
                 let is_autorepeat = cg_event.get_integer_value_field(8) != 0;
-                let is_keyup = matches!(event_type, CGEventType::KeyUp);
+                let mut is_keyup = matches!(event_type, CGEventType::KeyUp);
+                
+                if matches!(event_type, CGEventType::FlagsChanged) {
+                    let current_flags = cg_event.get_flags().bits();
+                    let old_flags = previous_flags.get();
+                    is_keyup = current_flags < old_flags;
+                    previous_flags.set(current_flags);
+                }
+
                 if is_autorepeat && !is_keyup { return None; }
 
                 let mut velocity_mult = 1.0f32;
