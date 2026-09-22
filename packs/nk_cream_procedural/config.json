@@ -1,0 +1,14 @@
+{
+  "procedural": {
+    "switch_type": "cream",
+    "spring_weight": 45.0,
+    "lube_amount": 0.85,
+    "pitch": 0.85,
+    "keycap_material": "pbt",
+    "plate_material": "pom",
+    "mounting_style": "gasket",
+    "foam_mod": 0.80,
+    "case_material": "plastic",
+    "o_rings": 0.0
+  }
+}

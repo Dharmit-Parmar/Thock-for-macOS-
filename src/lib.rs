@@ -1,21 +1,74 @@
 mod keymap;
 mod dsp;
-use std::time::Instant;
 
+use rustyline::completion::{Completer, Pair};
+use rustyline::error::ReadlineError;
+use rustyline::highlight::Highlighter;
+use rustyline::hint::Hinter;
+use rustyline::validate::Validator;
+use rustyline::Context;
+
+#[derive(rustyline::Helper)]
+struct ThockHelper {
+    commands: Vec<String>,
+    packs: Vec<String>,
+}
+
+
+impl Validator for ThockHelper {}
+impl Highlighter for ThockHelper {}
+impl Hinter for ThockHelper {
+    type Hint = String;
+    fn hint(&self, _line: &str, _pos: usize, _ctx: &Context<'_>) -> Option<String> { None }
+}
+impl Completer for ThockHelper {
+    type Candidate = Pair;
+
+    fn complete(&self, line: &str, pos: usize, _ctx: &Context<'_>) -> Result<(usize, Vec<Pair>), ReadlineError> {
+        let mut candidates = Vec::new();
+        let words: Vec<&str> = line[..pos].split_whitespace().collect();
+        let is_first_word = words.is_empty() || (words.len() == 1 && !line[..pos].ends_with(' '));
+        
+        if is_first_word {
+            let word = words.first().unwrap_or(&"");
+            for cmd in &self.commands {
+                if cmd.starts_with(word) {
+                    candidates.push(Pair { display: cmd.clone(), replacement: cmd.clone() });
+                }
+            }
+        } else if words[0] == "pack" {
+            let word = if words.len() == 2 { words[1] } else { "" };
+            for pack in &self.packs {
+                if pack.starts_with(word) {
+                    candidates.push(Pair { display: pack.clone(), replacement: pack.clone() });
+                }
+            }
+        }
+        
+        let start = if is_first_word {
+            line[..pos].rfind(' ').map(|i| i + 1).unwrap_or(0)
+        } else {
+            line[..pos].rfind(' ').map(|i| i + 1).unwrap_or(0)
+        };
+
+        Ok((start, candidates))
+    }
+}
 use core_graphics::event::{CGEventTap, CGEventTapLocation, CGEventTapPlacement, CGEventTapOptions, CGEventType, EventField};
 use core_foundation::runloop::CFRunLoop;
 use rodio::{Decoder, OutputStream, Source};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
-    fs::{self, File},
+    fs,
     io::BufReader,
     path::Path,
     sync::{
-        atomic::{AtomicU32, Ordering},
+        atomic::{AtomicU32, AtomicU64, Ordering},
         Arc, RwLock,
     },
     thread,
+    time::Instant,
 };
 
 
@@ -27,45 +80,38 @@ extern "C" {
 
 static VOL: AtomicU32 = AtomicU32::new(100);
 
+// ArcBuffer stores the raw compressed file bytes (WAV/OGG).
+// Decoding to f32 PCM happens lazily when Iterator::next() is first called,
+// inside rodio's internal stream thread — so it never blocks the CGEventTap.
+// RAM footprint per pack: ~300KB (bytes) instead of ~9MB (decoded f32 PCM).
 #[derive(Clone)]
 struct ArcBuffer {
-    data: Arc<Vec<f32>>,
-    channels: u16,
-    sample_rate: u32,
-    cursor: usize,
+    bytes: Arc<Vec<u8>>,
     volume: f32,
 }
 
 impl ArcBuffer {
-    fn new(data: Arc<Vec<f32>>, channels: u16, sample_rate: u32) -> Self {
-        Self { data, channels, sample_rate, cursor: 0, volume: 1.0 }
+    fn new(bytes: Arc<Vec<u8>>) -> Self {
+        Self { bytes, volume: 1.0 }
     }
 
     fn with_volume(mut self, vol: f32) -> Self {
         self.volume = vol;
         self
     }
-}
 
-impl Iterator for ArcBuffer {
-    type Item = f32;
-    #[inline(always)]
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.cursor < self.data.len() {
-            let val = self.data[self.cursor] * self.volume;
-            self.cursor += 1;
-            Some(val)
-        } else {
-            None
-        }
+    /// Decode to a live rodio Source. Called on the audio output thread, never on the event tap.
+    fn into_source(self) -> Option<impl Source<Item = f32>> {
+        use std::io::Cursor;
+        let cursor = Cursor::new((*self.bytes).clone());
+        let decoder = Decoder::new(BufReader::new(cursor)).ok()?;
+        Some(decoder.convert_samples::<f32>().amplify(self.volume))
     }
 }
 
-impl Source for ArcBuffer {
-    fn current_frame_len(&self) -> Option<usize> { Some(self.data.len() - self.cursor) }
-    fn channels(&self) -> u16 { self.channels }
-    fn sample_rate(&self) -> u32 { self.sample_rate }
-    fn total_duration(&self) -> Option<std::time::Duration> { None }
+fn load_audio_file(path: &Path) -> Option<ArcBuffer> {
+    let bytes = fs::read(path).ok()?;
+    Some(ArcBuffer::new(Arc::new(bytes)))
 }
 
 fn default_pitch() -> f32 { 1.0 }
@@ -73,6 +119,7 @@ fn default_vol_mult() -> f32 { 1.0 }
 
 #[derive(Serialize, Deserialize)]
 struct PackConfig {
+    #[serde(default)]
     defaults: Vec<String>,
     #[serde(default)]
     mappings: HashMap<String, String>,
@@ -92,15 +139,6 @@ struct LoadedPack {
     pitch: f32,
     vol_mult: f32,
     procedural: Option<dsp::ProceduralConfig>,
-}
-
-fn load_audio_file(path: &Path) -> Option<ArcBuffer> {
-    let file = File::open(path).ok()?;
-    let decoder = Decoder::new(BufReader::new(file)).ok()?;
-    let channels = decoder.channels();
-    let sample_rate = decoder.sample_rate();
-    let samples: Vec<f32> = decoder.convert_samples().collect();
-    Some(ArcBuffer::new(Arc::new(samples), channels, sample_rate))
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -236,9 +274,14 @@ pub fn run(is_cli: bool) {
                 return;
             }
         };
-        let default_idx = AtomicU32::new(0);
+        // Cell<usize> provides interior mutability with zero overhead (no locks, no atomics).
+        // CGEventTap requires Fn (not FnMut), so we can't mutate a plain usize directly.
+        let default_idx = std::cell::Cell::new(0usize);
 
-        let last_press = Arc::new(RwLock::new(Instant::now()));
+        // Lock-free velocity tracking: store nanoseconds since UNIX epoch as AtomicU64.
+        // Avoids a write-lock acquisition on every single KeyDown event.
+        let epoch = Instant::now();
+        let last_press_ns = Arc::new(AtomicU64::new(0));
         let tap_res = CGEventTap::new(
             CGEventTapLocation::Session,
             CGEventTapPlacement::HeadInsertEventTap,
@@ -249,20 +292,20 @@ pub fn run(is_cli: bool) {
                 let is_keyup = matches!(event_type, CGEventType::KeyUp);
                 if is_autorepeat && !is_keyup { return None; }
 
-                let now = Instant::now();
-                let mut velocity_mult = 1.0;
+                let mut velocity_mult = 1.0f32;
                 if !is_keyup {
-                    let mut lp = last_press.write().unwrap();
-                    let elapsed = now.duration_since(*lp).as_secs_f32();
+                    let now_ns = epoch.elapsed().as_nanos() as u64;
+                    let prev_ns = last_press_ns.swap(now_ns, Ordering::Relaxed);
+                    let elapsed = (now_ns.saturating_sub(prev_ns)) as f32 / 1_000_000_000.0;
                     velocity_mult = (0.5 + (0.1 / (elapsed + 0.01))).clamp(0.8, 1.5);
-                    *lp = now;
                 }
 
                 let keycode = cg_event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) as u16;
 
                 if let Some(pack) = &*pack_clone.read().unwrap() {
                     let vol_percent = VOL.load(Ordering::Relaxed) as f32 / 100.0;
-                    let vol = vol_percent * vol_percent * vol_percent * pack.vol_mult;
+                    // Squared curve: at vol=80% → 64% amplitude (perceptually natural)
+                    let vol = vol_percent * vol_percent * pack.vol_mult;
 
                     if let Some(proc_config) = &pack.procedural {
                         let proc = dsp::ProceduralSwitch::new(proc_config.clone(), is_keyup, velocity_mult);
@@ -273,24 +316,28 @@ pub fn run(is_cli: bool) {
                             if let Some(mapped) = pack.mappings.get(code) {
                                 Some(mapped)
                             } else if !pack.defaults.is_empty() {
-                                let idx = default_idx.fetch_add(1, Ordering::Relaxed) as usize;
-                                Some(&pack.defaults[idx % pack.defaults.len()])
+                                let idx = default_idx.get() % pack.defaults.len();
+                                default_idx.set(idx.wrapping_add(1));
+                                Some(&pack.defaults[idx])
                             } else {
                                 None
                             }
                         } else if !pack.defaults.is_empty() {
-                            let idx = default_idx.fetch_add(1, Ordering::Relaxed) as usize;
-                            Some(&pack.defaults[idx % pack.defaults.len()])
+                            let idx = default_idx.get() % pack.defaults.len();
+                            default_idx.set(idx.wrapping_add(1));
+                            Some(&pack.defaults[idx])
                         } else {
                             None
                         };
 
                         if let Some(a) = audio {
-                            let buf = a.clone().with_volume(vol);
-                            if (pack.pitch - 1.0).abs() > 0.01 {
-                                let _ = handle.play_raw(buf.speed(pack.pitch).convert_samples());
-                            } else {
-                                let _ = handle.play_raw(buf.convert_samples());
+                            // Lazily decode bytes to PCM on the audio thread via into_source()
+                            if let Some(src) = a.clone().with_volume(vol).into_source() {
+                                if (pack.pitch - 1.0).abs() > 0.01 {
+                                    let _ = handle.play_raw(src.speed(pack.pitch).convert_samples());
+                                } else {
+                                    let _ = handle.play_raw(src.convert_samples());
+                                }
                             }
                         }
                     }
@@ -315,6 +362,7 @@ pub fn run(is_cli: bool) {
     };
 
     if is_cli {
+        // Print banner only once here (removed duplicate inside the spawned thread below)
         println!("\n🎧 Thock Headless CLI Mode Active");
         println!("Type 'help' to see available commands.\n");
         
@@ -322,16 +370,25 @@ pub fn run(is_cli: bool) {
         // purely to the macOS CGEventTap. MacOS heavily throttles background
         // threads, which causes input latency. Running the event tap on the
         // main thread fixes the latency instantly.
+        let packs_for_rl = available_packs.clone();
         thread::spawn(move || {
-            let stdin = std::io::stdin();
+            let helper = ThockHelper {
+                commands: vec!["vol".to_string(), "pack".to_string(), "proc".to_string(), "pitch".to_string(), "help".to_string(), "exit".to_string()],
+                packs: packs_for_rl,
+            };
+            let mut rl = rustyline::Editor::<ThockHelper, _>::new().unwrap();
+            rl.set_helper(Some(helper));
+            
             loop {
-            let mut input = String::new();
-            match stdin.read_line(&mut input) {
-                Ok(0) => break, // EOF reached
-                Err(_) => break,
-                _ => {}
-            }
-            let parts: Vec<&str> = input.trim().split_whitespace().collect();
+                let readline = rl.readline("> ");
+                let input = match readline {
+                    Ok(line) => {
+                        let _ = rl.add_history_entry(line.as_str());
+                        line
+                    },
+                    Err(_) => break,
+                };
+                let parts: Vec<&str> = input.trim().split_whitespace().collect();
             if parts.is_empty() { continue; }
             
             match parts[0] {
