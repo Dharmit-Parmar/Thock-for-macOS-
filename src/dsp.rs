@@ -203,7 +203,7 @@ impl ProceduralSwitch {
             "brass"                => 2800.0,
             "aluminum"             => 2400.0,
             "nylon"                => 1800.0, // Muted transient
-            "pom"                  => 1450.0, // Authentic NK Cream
+            "pom"                  => 1650.0, // NK Cream is a bit higher-pitched and clackier
             "abs"                  => 1200.0, // Low-pitch transient
             "polycarbonate" | "pc" => 900.0,  // Deep resonant thock
             _                      => 1450.0,
@@ -239,7 +239,7 @@ impl ProceduralSwitch {
             "aluminum"             => 0.025,
             "polycarbonate" | "pc" => 0.018, // Smooth medium-length decay
             "nylon"                => 0.012, // Moderate-fast decay
-            "pom"                  => 0.010, // Self-lubricating, short ring
+            "pom"                  => 0.008, // Very short, snappy transient for POM clack
             "abs"                  => 0.007, // High internal friction, rapid acoustic decay
             _                      => 0.012,
         };
@@ -269,10 +269,11 @@ impl ProceduralSwitch {
         // ── Modal oscillator gains ───────────────────────────────────────────
         // In real switches, the fundamental (1.5kHz) and second mode (2.7kHz) hold 
         // the vast majority of the clack energy.
-        let a1 = base_amp * 0.85; 
-        let a2 = base_amp * 0.45;
-        let a3 = base_amp * 0.15;
-        let a4 = base_amp * 0.05 * (if config.keycap_material == "pbt" { pbt_k } else { 1.0 });
+        // Distribute more energy to high frequencies for that authentic "clack"
+        let a1 = base_amp * 0.65; 
+        let a2 = base_amp * 0.60;
+        let a3 = base_amp * 0.35;
+        let a4 = base_amp * 0.15 * (if config.keycap_material == "pbt" { pbt_k } else { 1.0 });
 
         // Authentic modal structure of a rectangular POM keycap/switch cavity
         let modes = [
