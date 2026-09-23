@@ -50,6 +50,23 @@ impl Biquad {
         self.s2 = self.b2 * x - self.a2 * y;
         y
     }
+
+    #[inline]
+    pub fn process_nonlinear(&mut self, x: f32, drive: f32) -> f32 {
+        let y = self.b0 * x + self.s1;
+        self.s1 = self.b1 * x - self.a1 * y + self.s2;
+        self.s2 = self.b2 * x - self.a2 * y;
+        
+        // Padé soft clip embedded directly into the TDF-II states
+        let s1d = self.s1 * drive;
+        let s2d = self.s2 * drive;
+        let s12 = s1d * s1d;
+        let s22 = s2d * s2d;
+        self.s1 = (s1d * (27.0 + s12) / (27.0 + 9.0 * s12)) / drive;
+        self.s2 = (s2d * (27.0 + s22) / (27.0 + 9.0 * s22)) / drive;
+        
+        y
+    }
 }
 
 // ─── Config ───────────────────────────────────────────────────────────────────
@@ -204,12 +221,13 @@ impl ProceduralSwitch {
             "pom"                  => 0.0004, // Snappy POM clack
             _                      => 0.0003,
         };
-        let t_e = base_te * (1.0 + config.o_rings * 0.9);
+        let t_e = base_te * (1.0 + config.o_rings * 0.9) / velocity.clamp(0.5, 2.0);
 
-        // ── Amplitude: spring weight × velocity ───────────────────────────────
+        // ── Amplitude: spring weight × kinetic energy (v^2) ───────────────────
         let spring_scale = config.spring_weight / 60.0;
-        let vel = velocity.clamp(0.6, 2.0);
-        let base_amp = spring_scale * vel * if is_keyup { 0.70 } else { 1.0 };
+        let vel = velocity.clamp(0.5, 2.0);
+        let kinetic_energy = vel * vel;
+        let base_amp = spring_scale * kinetic_energy * if is_keyup { 0.70 } else { 1.0 };
 
         // ── Decay: plate → case → gasket/foam modifications ───────────────────
         // High frequencies decay extremely fast in plastic, but we need them to 
@@ -264,13 +282,12 @@ impl ProceduralSwitch {
             Modal::new(f0 * 3.12,  d4, a4, t_e * 0.3, srf),    // e.g. 4524 Hz
         ];
 
-        // ── Friction noise: bandpass at stem-scrape frequency ─────────────────
-        // Even heavily lubed switches produce broadband impact noise (plastic slap).
-        // Attenuating this by (1.0 - lube)^2 made it sound like a sterile synth.
-        // We use a much gentler curve so the noise floor stays present for texture.
-        let friction_vol = (1.0 - (config.lube_amount * 0.6)) * 0.5;
-        let friction_fc  = 2500.0 + (1.0 - config.lube_amount) * 1500.0;
-        let friction_bpf = Biquad::bandpass(srf, friction_fc.min(4000.0), 0.5);
+        // ── Friction noise: LPF mapped to Roughness & Velocity ─────────────────
+        // Roughness maps to noise variance. Fricton scales strictly with velocity.
+        let roughness = 1.0 - (config.lube_amount * 0.8);
+        let friction_vol = roughness * vel * 0.8;
+        let friction_fc = 8000.0 - (config.lube_amount * 6000.0);
+        let friction_bpf = Biquad::lowpass(srf, friction_fc.min(8000.0), 0.707);
         
         // Very fast decay for the initial slap noise (2-3ms)
         let noise_decay_coeff = (-1500.0 / srf).exp();
@@ -379,20 +396,16 @@ impl Iterator for ProceduralSwitch {
 
         let mut out = body + friction + extra;
 
-        // ── Output LPF (lube + foam smoothing) ────────────────────────────────
-        out = self.output_lpf.process(out);
+        // ── Output LPF (lube + foam smoothing with embedded Padé Saturation) ───
+        if self.foam_sat > 0.05 {
+            let drive = 1.0 + self.foam_sat * 2.0;
+            out = self.output_lpf.process_nonlinear(out, drive);
+        } else {
+            out = self.output_lpf.process(out);
+        }
 
         // ── Gasket HPF (sub-bass isolation) ───────────────────────────────────
         out = self.mount_hpf.process(out);
-
-        // ── Foam soft-saturation (Rational Padé tanh approx from research) ────
-        if self.foam_sat > 0.05 {
-            let drive = 1.0 + self.foam_sat * 2.0;
-            let x = out * drive;
-            let x2 = x * x;
-            // Padé approx: x * (27 + x^2) / (27 + 9x^2)
-            out = (x * (27.0 + x2) / (27.0 + 9.0 * x2)) / drive;
-        }
 
         Some(out * 0.88)
     }
