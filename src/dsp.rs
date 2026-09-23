@@ -182,11 +182,14 @@ impl ProceduralSwitch {
         // A mechanical switch is a tiny plastic cavity (14mm).
         // Resonance is high-frequency clack (1200 Hz - 3000 Hz).
         let base_f0: f32 = match config.plate_material.as_str() {
+            "fr4"                  => 3500.0, // High-pitch clack
             "brass"                => 2800.0,
             "aluminum"             => 2400.0,
-            "polycarbonate" | "pc" => 1700.0,
-            "pom"                  => 1450.0, // Authentic NK Cream fundamental resonance
-            _                      => 1800.0,
+            "nylon"                => 1800.0, // Muted transient
+            "pom"                  => 1450.0, // Authentic NK Cream
+            "abs"                  => 1200.0, // Low-pitch transient
+            "polycarbonate" | "pc" => 900.0,  // Deep resonant thock
+            _                      => 1450.0,
         };
         // Top-out (keyup) hits the thinner top housing, producing a higher pitch
         let f0 = base_f0 * config.pitch * if is_keyup { 1.35 } else { 1.0 };
@@ -213,11 +216,14 @@ impl ProceduralSwitch {
         // form the acoustic body of the clack. 
         // -60dB tau values for each mode.
         let d1_base: f32 = match config.plate_material.as_str() {
+            "fr4"                  => 0.055, // Low damping, extended ring
             "brass"                => 0.040,
             "aluminum"             => 0.025,
-            "polycarbonate" | "pc" => 0.012,
-            "pom"                  => 0.010, // POM is dense and self-lubricating, very short ring
-            _                      => 0.015,
+            "polycarbonate" | "pc" => 0.018, // Smooth medium-length decay
+            "nylon"                => 0.012, // Moderate-fast decay
+            "pom"                  => 0.010, // Self-lubricating, short ring
+            "abs"                  => 0.007, // High internal friction, rapid acoustic decay
+            _                      => 0.012,
         };
         let case_mult: f32 = match config.case_material.as_str() {
             "aluminum"             => 0.65,
@@ -379,12 +385,13 @@ impl Iterator for ProceduralSwitch {
         // ── Gasket HPF (sub-bass isolation) ───────────────────────────────────
         out = self.mount_hpf.process(out);
 
-        // ── Foam soft-saturation (Fast polynomial approx) ─────────────────────
+        // ── Foam soft-saturation (Rational Padé tanh approx from research) ────
         if self.foam_sat > 0.05 {
-            let drive = 1.0 + self.foam_sat;
-            let driven = out * drive;
-            // Fast soft clip: x / (1 + |x|) instead of tanh(x)
-            out = (driven / (1.0 + driven.abs())) / drive;
+            let drive = 1.0 + self.foam_sat * 2.0;
+            let x = out * drive;
+            let x2 = x * x;
+            // Padé approx: x * (27 + x^2) / (27 + 9x^2)
+            out = (x * (27.0 + x2) / (27.0 + 9.0 * x2)) / drive;
         }
 
         Some(out * 0.88)
