@@ -203,7 +203,7 @@ impl ProceduralSwitch {
             "brass"                => 2800.0,
             "aluminum"             => 2400.0,
             "nylon"                => 1800.0, // Muted transient
-            "pom"                  => 1650.0, // NK Cream is a bit higher-pitched and clackier
+            "pom"                  => 1350.0, // Deepen the fundamental so it sounds like a thick switch, not thin plastic
             "abs"                  => 1200.0, // Low-pitch transient
             "polycarbonate" | "pc" => 900.0,  // Deep resonant thock
             _                      => 1450.0,
@@ -269,11 +269,11 @@ impl ProceduralSwitch {
         // ── Modal oscillator gains ───────────────────────────────────────────
         // In real switches, the fundamental (1.5kHz) and second mode (2.7kHz) hold 
         // the vast majority of the clack energy.
-        // Distribute more energy to high frequencies for that authentic "clack"
-        let a1 = base_amp * 0.65; 
-        let a2 = base_amp * 0.60;
-        let a3 = base_amp * 0.35;
-        let a4 = base_amp * 0.15 * (if config.keycap_material == "pbt" { pbt_k } else { 1.0 });
+        // Focus energy on fundamental to remove the "tapping on thin plastic" sound
+        let a1 = base_amp * 0.85; 
+        let a2 = base_amp * 0.25;
+        let a3 = base_amp * 0.08;
+        let a4 = base_amp * 0.02 * (if config.keycap_material == "pbt" { pbt_k } else { 1.0 });
 
         // Authentic modal structure of a rectangular POM keycap/switch cavity
         let modes = [
@@ -285,10 +285,11 @@ impl ProceduralSwitch {
 
         // ── Friction noise: LPF mapped to Roughness & Velocity ─────────────────
         // Roughness maps to noise variance. Fricton scales strictly with velocity.
+        // Lower the LPF significantly so it sounds like a low plastic scratch, NOT TV static (white noise).
         let roughness = 1.0 - (config.lube_amount * 0.8);
-        let friction_vol = roughness * vel * 0.8;
-        let friction_fc = 8000.0 - (config.lube_amount * 6000.0);
-        let friction_bpf = Biquad::lowpass(srf, friction_fc.min(8000.0), 0.707);
+        let friction_vol = roughness * vel * 0.15; // heavily reduce the static volume
+        let friction_fc = 1500.0 - (config.lube_amount * 1000.0); // 500Hz - 1.5kHz max
+        let friction_bpf = Biquad::lowpass(srf, friction_fc.max(200.0), 0.707);
         
         // Very fast decay for the initial slap noise (2-3ms)
         let noise_decay_coeff = (-1500.0 / srf).exp();
