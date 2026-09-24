@@ -608,6 +608,8 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
         let window = tao::window::WindowBuilder::new()
             .with_title("Thock")
             .with_inner_size(tao::dpi::LogicalSize::new(800.0, 600.0))
+            .with_min_inner_size(tao::dpi::LogicalSize::new(700.0, 500.0))
+            .with_max_inner_size(tao::dpi::LogicalSize::new(1200.0, 900.0))
             .build(event_loop)
             .unwrap();
 
