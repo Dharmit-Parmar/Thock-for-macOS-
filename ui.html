@@ -420,7 +420,31 @@
         if (windOn) windContainer.classList.remove('hidden'); else windContainer.classList.add('hidden');
         if (thunderOn) thunderContainer.classList.remove('hidden'); else thunderContainer.classList.add('hidden');
         
+        // Don't call updateAsmr here directly unless it exists! Wait, it will exist now.
         updateAsmr();
+    }
+
+    function updateAsmr() {
+        const rainOn = document.getElementById('asmr-rain-on').checked;
+        const windOn = document.getElementById('asmr-wind-on').checked;
+        const thunderOn = document.getElementById('asmr-thunder-on').checked;
+        
+        const settings = {
+            rain_on: rainOn,
+            wind_on: windOn,
+            thunder_on: thunderOn,
+            master_vol: parseInt(document.getElementById('asmr-vol').value),
+            rain_density: parseInt(document.getElementById('asmr-rain-density').value),
+            rain_vol: parseInt(document.getElementById('asmr-rain-vol').value),
+            wind_gust: parseInt(document.getElementById('asmr-wind-gust').value),
+            wind_vol: parseInt(document.getElementById('asmr-wind-vol').value),
+            thunder_freq: parseInt(document.getElementById('asmr-thunder-freq').value),
+            thunder_int: parseInt(document.getElementById('asmr-thunder-int').value),
+            thunder_vol: parseInt(document.getElementById('asmr-thunder-vol').value),
+        };
+        if (typeof safeIpc === 'function') {
+            safeIpc({ type: "asmr_update", value: settings });
+        }
     }
 
     function resetTestBoxMaker() {
