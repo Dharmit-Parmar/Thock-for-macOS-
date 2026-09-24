@@ -423,13 +423,15 @@ impl Source for ProceduralSwitch {
 // ─── ASMR Engine ──────────────────────────────────────────────────────────────
 use std::sync::atomic::{AtomicU32, Ordering};
 
-pub static ASMR_MODE: AtomicU32 = AtomicU32::new(0); // 0=none, 1=rain, 2=thunder
+pub static ASMR_RAIN_ON: AtomicU32 = AtomicU32::new(0);
+pub static ASMR_WIND_ON: AtomicU32 = AtomicU32::new(0);
+pub static ASMR_THUNDER_ON: AtomicU32 = AtomicU32::new(0);
 pub static ASMR_MASTER_VOL: AtomicU32 = AtomicU32::new(50);
 pub static ASMR_RAIN_DENS: AtomicU32 = AtomicU32::new(50);
-pub static ASMR_WIND_DENS: AtomicU32 = AtomicU32::new(30);
+pub static ASMR_WIND_GUST: AtomicU32 = AtomicU32::new(30);
 pub static ASMR_RAIN_VOL: AtomicU32 = AtomicU32::new(70);
 pub static ASMR_WIND_VOL: AtomicU32 = AtomicU32::new(40);
-pub static ASMR_THUNDER_DELAY: AtomicU32 = AtomicU32::new(50);
+pub static ASMR_THUNDER_FREQ: AtomicU32 = AtomicU32::new(50);
 pub static ASMR_THUNDER_INT: AtomicU32 = AtomicU32::new(70);
 pub static ASMR_THUNDER_VOL: AtomicU32 = AtomicU32::new(80);
 
@@ -471,8 +473,11 @@ impl Iterator for AsmrSource {
     type Item = f32;
     #[inline]
     fn next(&mut self) -> Option<f32> {
-        let mode = ASMR_MODE.load(Ordering::Relaxed);
-        if mode == 0 {
+        let rain_on = ASMR_RAIN_ON.load(Ordering::Relaxed) != 0;
+        let wind_on = ASMR_WIND_ON.load(Ordering::Relaxed) != 0;
+        let thunder_on = ASMR_THUNDER_ON.load(Ordering::Relaxed) != 0;
+        
+        if !rain_on && !wind_on && !thunder_on {
             return Some(0.0);
         }
 
@@ -497,42 +502,46 @@ impl Iterator for AsmrSource {
         let mut out = 0.0;
         
         // --- WIND ---
-        let wind_dens = ASMR_WIND_DENS.load(Ordering::Relaxed) as f32 / 100.0;
-        let wind_v = ASMR_WIND_VOL.load(Ordering::Relaxed) as f32 / 100.0;
-        
-        // Modulate wind cutoff frequency slowly
-        self.phase += 0.00005 * (0.5 + wind_dens);
-        if self.phase > std::f32::consts::PI * 2.0 { self.phase -= std::f32::consts::PI * 2.0; }
-        
-        let lfo = (self.phase.sin() + (self.phase * 2.3).cos() * 0.5) * 0.5 + 0.5;
-        let wind_cutoff = 100.0 + lfo * 800.0 * wind_dens;
-        self.wind_lpf.set_lowpass(44100.0, wind_cutoff, 0.5);
-        
-        // Wind is brown noise swept by a lowpass filter
-        let wind = self.wind_lpf.process(brown) * wind_v * 0.6;
-        out += wind;
+        if wind_on {
+            let wind_gust = ASMR_WIND_GUST.load(Ordering::Relaxed) as f32 / 100.0;
+            let wind_v = ASMR_WIND_VOL.load(Ordering::Relaxed) as f32 / 100.0;
+            
+            // Modulate wind cutoff frequency slowly
+            self.phase += 0.00005 * (0.5 + wind_gust);
+            if self.phase > std::f32::consts::PI * 2.0 { self.phase -= std::f32::consts::PI * 2.0; }
+            
+            let lfo = (self.phase.sin() + (self.phase * 2.3).cos() * 0.5) * 0.5 + 0.5;
+            let wind_cutoff = 100.0 + lfo * 800.0 * wind_gust;
+            self.wind_lpf.set_lowpass(44100.0, wind_cutoff, 0.5);
+            
+            // Wind is brown noise swept by a lowpass filter
+            let wind = self.wind_lpf.process(brown) * wind_v * 0.6;
+            out += wind;
+        }
 
         // --- RAIN ---
-        let rain_dens = ASMR_RAIN_DENS.load(Ordering::Relaxed) as f32 / 100.0;
-        let rain_v = ASMR_RAIN_VOL.load(Ordering::Relaxed) as f32 / 100.0;
-        
-        // Rain is highpassed pink noise + sporadic intense crackles (drops)
-        let mut drop = 0.0;
-        if rain_dens > 0.01 && self.prng.next_f32().abs() < (0.001 + 0.008 * rain_dens) {
-            drop = white * (1.0 + rain_dens);
+        if rain_on {
+            let rain_dens = ASMR_RAIN_DENS.load(Ordering::Relaxed) as f32 / 100.0;
+            let rain_v = ASMR_RAIN_VOL.load(Ordering::Relaxed) as f32 / 100.0;
+            
+            // Rain is highpassed pink noise + sporadic intense crackles (drops)
+            let mut drop = 0.0;
+            if rain_dens > 0.01 && self.prng.next_f32().abs() < (0.001 + 0.008 * rain_dens) {
+                drop = white * (1.0 + rain_dens);
+            }
+            
+            // Lower cutoff frequency for heavier rain (more rumble/body)
+            let rain_cutoff = 1800.0 - (rain_dens * 1400.0);
+            self.rain_hpf.set_highpass(44100.0, rain_cutoff, 0.6);
+            
+            let rain_base = self.rain_hpf.process(pink + drop);
+            let rain = rain_base * rain_v * 0.8;
+            out += rain;
         }
-        
-        // Lower cutoff frequency for heavier rain (more rumble/body)
-        let rain_cutoff = 1800.0 - (rain_dens * 1400.0);
-        self.rain_hpf.set_highpass(44100.0, rain_cutoff, 0.6);
-        
-        let rain_base = self.rain_hpf.process(pink + drop);
-        let rain = rain_base * rain_v * (0.1 + rain_dens * 0.9) * 0.8;
-        out += rain;
 
         // --- THUNDER ---
-        if mode == 2 {
-            let t_delay = ASMR_THUNDER_DELAY.load(Ordering::Relaxed);
+        if thunder_on {
+            let t_freq = ASMR_THUNDER_FREQ.load(Ordering::Relaxed);
             let t_int = ASMR_THUNDER_INT.load(Ordering::Relaxed) as f32 / 100.0;
             let t_vol = ASMR_THUNDER_VOL.load(Ordering::Relaxed) as f32 / 100.0;
 
@@ -543,7 +552,7 @@ impl Iterator for AsmrSource {
                     self.thunder_env = 1.0;
                     let next_base = 44100 * 5; 
                     let next_var = 44100 * 15;
-                    let freq_factor = 1.0 - (t_delay as f32 / 100.0); 
+                    let freq_factor = 1.0 - (t_freq as f32 / 100.0); 
                     self.thunder_timer = next_base + (self.prng.next_f32().abs() * next_var as f32 * freq_factor) as u32;
                 }
             }

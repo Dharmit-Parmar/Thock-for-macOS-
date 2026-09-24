@@ -515,28 +515,28 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
                 },
                 "asmr" => {
                     if parts.len() == 1 {
-                        let mode = crate::dsp::ASMR_MODE.load(Ordering::Relaxed);
+                        let mode = 0;
                         println!("ASMR Status:");
                         println!("  Mode: {}", match mode { 1 => "rain", 2 => "thunder", _ => "none" });
                         println!("  Master Vol: {}%", crate::dsp::ASMR_MASTER_VOL.load(Ordering::Relaxed));
                         if mode >= 1 {
                             println!("  Rain Dens: {}%, Vol: {}%", crate::dsp::ASMR_RAIN_DENS.load(Ordering::Relaxed), crate::dsp::ASMR_RAIN_VOL.load(Ordering::Relaxed));
-                            println!("  Wind Dens: {}%, Vol: {}%", crate::dsp::ASMR_WIND_DENS.load(Ordering::Relaxed), crate::dsp::ASMR_WIND_VOL.load(Ordering::Relaxed));
+                            println!("  Wind Gust: {}%, Vol: {}%", crate::dsp::ASMR_WIND_GUST.load(Ordering::Relaxed), crate::dsp::ASMR_WIND_VOL.load(Ordering::Relaxed));
                         }
                         if mode == 2 {
-                            println!("  Thunder Delay: {}%, Int: {}%, Vol: {}%", crate::dsp::ASMR_THUNDER_DELAY.load(Ordering::Relaxed), crate::dsp::ASMR_THUNDER_INT.load(Ordering::Relaxed), crate::dsp::ASMR_THUNDER_VOL.load(Ordering::Relaxed));
+                            println!("  Thunder Freq: {}%, Int: {}%, Vol: {}%", crate::dsp::ASMR_THUNDER_FREQ.load(Ordering::Relaxed), crate::dsp::ASMR_THUNDER_INT.load(Ordering::Relaxed), crate::dsp::ASMR_THUNDER_VOL.load(Ordering::Relaxed));
                         }
                         println!("\nUsage:");
                         println!("  asmr none|rain|thunder");
-                        println!("  asmr <vol|rain_dens|wind_dens|rain_vol|wind_vol|thunder_delay|thunder_int|thunder_vol> <0-100>");
+                        println!("  asmr <vol|rain_dens|wind_gust|rain_vol|wind_vol|thunder_freq|thunder_int|thunder_vol> <0-100>");
                         continue;
                     }
                     
                     let prop = parts[1];
                     match prop {
-                        "none" => { crate::dsp::ASMR_MODE.store(0, Ordering::Relaxed); println!("✅ ASMR disabled"); },
-                        "rain" => { crate::dsp::ASMR_MODE.store(1, Ordering::Relaxed); println!("🌧️ ASMR set to Rain"); },
-                        "thunder" => { crate::dsp::ASMR_MODE.store(2, Ordering::Relaxed); println!("⛈️ ASMR set to Thunder"); },
+                        "none" => { crate::dsp::ASMR_RAIN_ON.store(0, Ordering::Relaxed); crate::dsp::ASMR_WIND_ON.store(0, Ordering::Relaxed); crate::dsp::ASMR_THUNDER_ON.store(0, Ordering::Relaxed); println!("✅ ASMR disabled"); },
+                        "rain" => { crate::dsp::ASMR_RAIN_ON.store(1, Ordering::Relaxed); println!("🌧️ ASMR Rain on"); },
+                        "thunder" => { crate::dsp::ASMR_THUNDER_ON.store(1, Ordering::Relaxed); println!("⛈️ ASMR Thunder on"); },
                         _ => {
                             if parts.len() >= 3 {
                                 if let Ok(v) = parts[2].parse::<u32>() {
@@ -544,10 +544,10 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
                                     match prop {
                                         "vol" => crate::dsp::ASMR_MASTER_VOL.store(v, Ordering::Relaxed),
                                         "rain_dens" => crate::dsp::ASMR_RAIN_DENS.store(v, Ordering::Relaxed),
-                                        "wind_dens" => crate::dsp::ASMR_WIND_DENS.store(v, Ordering::Relaxed),
+                                        "wind_gust" => crate::dsp::ASMR_WIND_GUST.store(v, Ordering::Relaxed),
                                         "rain_vol" => crate::dsp::ASMR_RAIN_VOL.store(v, Ordering::Relaxed),
                                         "wind_vol" => crate::dsp::ASMR_WIND_VOL.store(v, Ordering::Relaxed),
-                                        "thunder_delay" => crate::dsp::ASMR_THUNDER_DELAY.store(v, Ordering::Relaxed),
+                                        "thunder_freq" => crate::dsp::ASMR_THUNDER_FREQ.store(v, Ordering::Relaxed),
                                         "thunder_int" => crate::dsp::ASMR_THUNDER_INT.store(v, Ordering::Relaxed),
                                         "thunder_vol" => crate::dsp::ASMR_THUNDER_VOL.store(v, Ordering::Relaxed),
                                         _ => { println!("Unknown ASMR property: {}", prop); continue; }
@@ -814,12 +814,15 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
                         }
                         "asmr_update" => {
                             if let Some(val) = msg.value.as_ref() {
-                                let mode_str = val.get("type").and_then(|v| v.as_str()).unwrap_or("none");
-                                crate::dsp::ASMR_MODE.store(match mode_str {
-                                    "rain" => 1,
-                                    "thunder" => 2,
-                                    _ => 0,
-                                }, std::sync::atomic::Ordering::Relaxed);
+                                if let Some(v) = val.get("rain_on").and_then(|v| v.as_bool()) {
+                                    crate::dsp::ASMR_RAIN_ON.store(if v { 1 } else { 0 }, std::sync::atomic::Ordering::Relaxed);
+                                }
+                                if let Some(v) = val.get("wind_on").and_then(|v| v.as_bool()) {
+                                    crate::dsp::ASMR_WIND_ON.store(if v { 1 } else { 0 }, std::sync::atomic::Ordering::Relaxed);
+                                }
+                                if let Some(v) = val.get("thunder_on").and_then(|v| v.as_bool()) {
+                                    crate::dsp::ASMR_THUNDER_ON.store(if v { 1 } else { 0 }, std::sync::atomic::Ordering::Relaxed);
+                                }
                                 
                                 if let Some(v) = val.get("master_vol").and_then(|v| v.as_u64()) {
                                     crate::dsp::ASMR_MASTER_VOL.store(v as u32, std::sync::atomic::Ordering::Relaxed);
@@ -827,8 +830,8 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
                                 if let Some(v) = val.get("rain_density").and_then(|v| v.as_u64()) {
                                     crate::dsp::ASMR_RAIN_DENS.store(v as u32, std::sync::atomic::Ordering::Relaxed);
                                 }
-                                if let Some(v) = val.get("wind_density").and_then(|v| v.as_u64()) {
-                                    crate::dsp::ASMR_WIND_DENS.store(v as u32, std::sync::atomic::Ordering::Relaxed);
+                                if let Some(v) = val.get("wind_gust").and_then(|v| v.as_u64()) {
+                                    crate::dsp::ASMR_WIND_GUST.store(v as u32, std::sync::atomic::Ordering::Relaxed);
                                 }
                                 if let Some(v) = val.get("rain_vol").and_then(|v| v.as_u64()) {
                                     crate::dsp::ASMR_RAIN_VOL.store(v as u32, std::sync::atomic::Ordering::Relaxed);
@@ -836,8 +839,8 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
                                 if let Some(v) = val.get("wind_vol").and_then(|v| v.as_u64()) {
                                     crate::dsp::ASMR_WIND_VOL.store(v as u32, std::sync::atomic::Ordering::Relaxed);
                                 }
-                                if let Some(v) = val.get("thunder_delay").and_then(|v| v.as_u64()) {
-                                    crate::dsp::ASMR_THUNDER_DELAY.store(v as u32, std::sync::atomic::Ordering::Relaxed);
+                                if let Some(v) = val.get("thunder_freq").and_then(|v| v.as_u64()) {
+                                    crate::dsp::ASMR_THUNDER_FREQ.store(v as u32, std::sync::atomic::Ordering::Relaxed);
                                 }
                                 if let Some(v) = val.get("thunder_intensity").and_then(|v| v.as_u64()) {
                                     crate::dsp::ASMR_THUNDER_INT.store(v as u32, std::sync::atomic::Ordering::Relaxed);
