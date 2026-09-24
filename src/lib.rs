@@ -57,7 +57,7 @@ impl Completer for ThockHelper {
 }
 use core_graphics::event::{CGEventTap, CGEventTapLocation, CGEventTapPlacement, CGEventTapOptions, CGEventType, EventField};
 use core_foundation::runloop::CFRunLoop;
-use rodio::{Decoder, OutputStream, Source};
+use rodio::{Decoder, OutputStream, Sink, Source};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
@@ -275,8 +275,104 @@ pub fn run(is_cli: bool) {
                 return;
             }
         };
-        // Spawn the continuous ASMR background track
-        let _ = handle.play_raw(crate::dsp::AsmrSource::new(48000));
+        // ── ASMR: three independent real-audio layers ────────────────────────
+        // Embedded OGG files compiled into the binary.
+        static RAIN_OGG: &[u8] = include_bytes!("../assets/asmr/rain.ogg");
+        static WIND_OGG: &[u8] = include_bytes!("../assets/asmr/wind.ogg");
+        static THUNDER_OGG: &[u8] = include_bytes!("../assets/asmr/thunder.ogg");
+
+        // Rain sink — looping
+        let rain_sink = Sink::try_new(&handle).unwrap_or_else(|_| {
+            eprintln!("ASMR Rain: could not create sink");
+            Sink::new_idle().0
+        });
+        rain_sink.set_volume(0.0);
+        {
+            let src = Decoder::new(std::io::Cursor::new(RAIN_OGG)).unwrap().repeat_infinite().convert_samples::<f32>();
+            rain_sink.append(src);
+        }
+        rain_sink.play();
+
+        // Wind sink — looping
+        let wind_sink = Sink::try_new(&handle).unwrap_or_else(|_| {
+            eprintln!("ASMR Wind: could not create sink");
+            Sink::new_idle().0
+        });
+        wind_sink.set_volume(0.0);
+        {
+            let src = Decoder::new(std::io::Cursor::new(WIND_OGG)).unwrap().repeat_infinite().convert_samples::<f32>();
+            wind_sink.append(src);
+        }
+        wind_sink.play();
+
+        // Thunder sink — one-shot, re-triggered by a timer thread
+        let thunder_sink = Sink::try_new(&handle).unwrap_or_else(|_| {
+            eprintln!("ASMR Thunder: could not create sink");
+            Sink::new_idle().0
+        });
+        thunder_sink.set_volume(0.0);
+        thunder_sink.play();
+
+        // Volume-control + thunder-retrigger polling thread
+        let _asmr_ctrl = std::thread::spawn(move || {
+            use std::sync::atomic::Ordering;
+            use crate::dsp::*;
+            let mut rng_seed: u32 = 0xdeadbeef;
+            let mut thunder_cooldown: u32 = 0;
+            loop {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+
+                let m = ASMR_MASTER_VOL.load(Ordering::Relaxed) as f32 / 100.0;
+
+                // Rain
+                let rain_on = ASMR_RAIN_ON.load(Ordering::Relaxed) != 0;
+                let rain_v = ASMR_RAIN_VOL.load(Ordering::Relaxed) as f32 / 100.0;
+                let rain_dens = ASMR_RAIN_DENS.load(Ordering::Relaxed) as f32 / 100.0;
+                rain_sink.set_volume(if rain_on { rain_v * m } else { 0.0 });
+                // Density -> playback speed: 0.5x (sparse/slow) to 2.0x (torrential)
+                rain_sink.set_speed(0.5 + rain_dens * 1.5);
+
+                // Wind
+                let wind_on = ASMR_WIND_ON.load(Ordering::Relaxed) != 0;
+                let wind_v = ASMR_WIND_VOL.load(Ordering::Relaxed) as f32 / 100.0;
+                let wind_gust = ASMR_WIND_GUST.load(Ordering::Relaxed) as f32 / 100.0;
+                wind_sink.set_volume(if wind_on { wind_v * m } else { 0.0 });
+                // Gust -> playback speed: 0.6x (gentle breeze) to 1.8x (strong gust)
+                wind_sink.set_speed(0.6 + wind_gust * 1.2);
+
+                // Thunder — retrigger one-shot randomly
+                let thunder_on = ASMR_THUNDER_ON.load(Ordering::Relaxed) != 0;
+                let t_vol = ASMR_THUNDER_VOL.load(Ordering::Relaxed) as f32 / 100.0;
+                let t_freq = ASMR_THUNDER_FREQ.load(Ordering::Relaxed); // 0-100: 0=rare, 100=frequent
+
+                if thunder_cooldown > 0 { thunder_cooldown -= 1; }
+
+                if thunder_on && thunder_cooldown == 0 && thunder_sink.empty() {
+                    // Random probability scaled by frequency slider
+                    rng_seed ^= rng_seed << 13;
+                    rng_seed ^= rng_seed >> 17;
+                    rng_seed ^= rng_seed << 5;
+                    let chance = (rng_seed as f32 / u32::MAX as f32).abs();
+                    let threshold = 0.003 + (t_freq as f32 / 100.0) * 0.03; // 0.3%-3.3% per tick
+                    if chance < threshold {
+                        let src = Decoder::new(std::io::Cursor::new(THUNDER_OGG))
+                            .unwrap()
+                            .convert_samples::<f32>();
+                        thunder_sink.append(src);
+                        thunder_sink.set_volume(t_vol * m);
+                        // Minimum cooldown between strikes (20 ticks = 1 second baseline)
+                        let min_cd = 40u32 + ((100 - t_freq) as u32 * 8);
+                        thunder_cooldown = min_cd;
+                    }
+                }
+                if !thunder_on {
+                    // Clear pending thunder if layer turned off
+                    if !thunder_sink.empty() {
+                        thunder_sink.clear();
+                    }
+                }
+            }
+        });
 
         // Cell<usize> provides interior mutability with zero overhead (no locks, no atomics).
         // CGEventTap requires Fn (not FnMut), so we can't mutate a plain usize directly.
