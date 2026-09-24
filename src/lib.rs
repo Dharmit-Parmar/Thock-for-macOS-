@@ -86,33 +86,64 @@ static VOL: AtomicU32 = AtomicU32::new(100);
 // inside rodio's internal stream thread — so it never blocks the CGEventTap.
 // RAM footprint per pack: ~300KB (bytes) instead of ~9MB (decoded f32 PCM).
 #[derive(Clone)]
-struct ArcBuffer {
-    bytes: Arc<Vec<u8>>,
+pub struct ArcPcm {
+    pub channels: u16,
+    pub sample_rate: u32,
+    pub samples: Arc<Vec<f32>>,
+}
+
+impl ArcPcm {
+    fn with_volume(self, vol: f32) -> ArcPcmSource {
+        ArcPcmSource {
+            pcm: self,
+            cursor: 0,
+            volume: vol,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct ArcPcmSource {
+    pcm: ArcPcm,
+    cursor: usize,
     volume: f32,
 }
 
-impl ArcBuffer {
-    fn new(bytes: Arc<Vec<u8>>) -> Self {
-        Self { bytes, volume: 1.0 }
-    }
-
-    fn with_volume(mut self, vol: f32) -> Self {
-        self.volume = vol;
-        self
-    }
-
-    /// Decode to a live rodio Source. Called on the audio output thread, never on the event tap.
-    fn into_source(self) -> Option<impl Source<Item = f32>> {
-        use std::io::Cursor;
-        let cursor = Cursor::new((*self.bytes).clone());
-        let decoder = Decoder::new(BufReader::new(cursor)).ok()?;
-        Some(decoder.convert_samples::<f32>().amplify(self.volume))
+impl Iterator for ArcPcmSource {
+    type Item = f32;
+    #[inline]
+    fn next(&mut self) -> Option<f32> {
+        if self.cursor < self.pcm.samples.len() {
+            let sample = self.pcm.samples[self.cursor] * self.volume;
+            self.cursor += 1;
+            Some(sample)
+        } else {
+            None
+        }
     }
 }
 
-fn load_audio_file(path: &Path) -> Option<ArcBuffer> {
+impl Source for ArcPcmSource {
+    fn current_frame_len(&self) -> Option<usize> {
+        Some(self.pcm.samples.len() - self.cursor)
+    }
+    fn channels(&self) -> u16 { self.pcm.channels }
+    fn sample_rate(&self) -> u32 { self.pcm.sample_rate }
+    fn total_duration(&self) -> Option<std::time::Duration> {
+        let frames = self.pcm.samples.len() as u64 / self.pcm.channels as u64;
+        Some(std::time::Duration::from_nanos(frames * 1_000_000_000 / self.pcm.sample_rate as u64))
+    }
+}
+
+fn load_audio_file(path: &Path) -> Option<ArcPcm> {
+    use rodio::Decoder;
+    use std::io::{BufReader, Cursor};
     let bytes = fs::read(path).ok()?;
-    Some(ArcBuffer::new(Arc::new(bytes)))
+    let decoder = Decoder::new(BufReader::new(Cursor::new(bytes))).ok()?;
+    let channels = decoder.channels();
+    let sample_rate = decoder.sample_rate();
+    let samples: Vec<f32> = decoder.convert_samples::<f32>().collect();
+    Some(ArcPcm { channels, sample_rate, samples: Arc::new(samples) })
 }
 
 fn default_pitch() -> f32 { 1.0 }
@@ -135,8 +166,8 @@ struct PackConfig {
 }
 
 struct LoadedPack {
-    defaults: Vec<ArcBuffer>,
-    mappings: HashMap<u64, ArcBuffer>,
+    defaults: Vec<ArcPcm>,
+    mappings: HashMap<u64, ArcPcm>,
     pitch: f32,
     vol_mult: f32,
     procedural: Option<dsp::ProceduralConfig>,
@@ -276,8 +307,8 @@ pub fn run(is_cli: bool) {
             }
         };
         // ── ASMR: three independent real-audio layers ────────────────────────
-        // Embedded OGG files compiled into the binary.
-        static RAIN_OGG: &[u8] = include_bytes!("../assets/asmr/rain.ogg");
+        // Embedded files compiled into the binary.
+        static RAIN_MP3: &[u8] = include_bytes!("../assets/asmr/rain.mp3");
         static WIND_OGG: &[u8] = include_bytes!("../assets/asmr/wind.ogg");
         static THUNDER_OGG: &[u8] = include_bytes!("../assets/asmr/thunder.ogg");
 
@@ -288,7 +319,7 @@ pub fn run(is_cli: bool) {
         });
         rain_sink.set_volume(0.0);
         {
-            let src = Decoder::new(std::io::Cursor::new(RAIN_OGG)).unwrap().repeat_infinite().convert_samples::<f32>();
+            let src = Decoder::new(std::io::Cursor::new(RAIN_MP3)).unwrap().repeat_infinite().convert_samples::<f32>();
             rain_sink.append(src);
         }
         rain_sink.play();
@@ -440,13 +471,11 @@ pub fn run(is_cli: bool) {
                         };
 
                         if let Some(a) = audio {
-                            // Lazily decode bytes to PCM on the audio thread via into_source()
-                            if let Some(src) = a.clone().with_volume(vol).into_source() {
-                                if (pack.pitch - 1.0).abs() > 0.01 {
-                                    let _ = handle.play_raw(src.speed(pack.pitch).convert_samples());
-                                } else {
-                                    let _ = handle.play_raw(src.convert_samples());
-                                }
+                            let src = a.clone().with_volume(vol);
+                            if (pack.pitch - 1.0).abs() > 0.01 {
+                                let _ = handle.play_raw(src.speed(pack.pitch).convert_samples());
+                            } else {
+                                let _ = handle.play_raw(src);
                             }
                         }
                     }
