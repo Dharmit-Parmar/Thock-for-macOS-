@@ -263,13 +263,13 @@
 
     function selectPack(packId) {
         document.querySelectorAll('.pack-card').forEach(c => {
-            c.classList.replace('border-orange-300', 'border-black/5');
-            c.classList.remove('ring-2', 'ring-orange-200');
+            c.classList.remove('bg-[#beb3a6]', 'border-orange-300', 'ring-2', 'ring-orange-200');
+            c.classList.add('bg-white/50', 'border-white/50');
         });
         const active = document.getElementById('pack-' + packId);
         if (active) {
-            active.classList.replace('border-black/5', 'border-orange-300');
-            active.classList.add('ring-2', 'ring-orange-200');
+            active.classList.remove('bg-white/50', 'border-white/50');
+            active.classList.add('bg-[#beb3a6]', 'border-orange-300', 'ring-2', 'ring-orange-200');
         }
         safeIpc({ type: "select_pack", value: packId });
     }

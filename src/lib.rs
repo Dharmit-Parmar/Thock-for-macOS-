@@ -687,7 +687,7 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
             };
 
             let card = format!(r##"
-                <div id="pack-{}" onclick="selectPack('{}')" data-fav="{}" class="pack-card relative backdrop-blur-md hover:bg-white hover:-translate-y-1 hover:shadow-xl border {} rounded-xl p-3.5 transition-all duration-300 ease-[cubic-bezier(0.25,0.8,0.25,1)] cursor-pointer flex flex-col justify-between h-32 overflow-hidden shadow-sm group">
+                <div id="pack-{}" onclick="selectPack('{}')" data-fav="{}" class="pack-card relative backdrop-blur-md hover:bg-white hover:-translate-y-1 hover:shadow-xl border {} rounded-xl p-3.5 transition-all duration-300 ease-[cubic-bezier(0.25,0.8,0.25,1)] cursor-pointer flex flex-col justify-between h-[146px] overflow-hidden shadow-sm group">
 
                     <!-- Keyboard Watermark SVG -->
                     <svg class="absolute -right-6 -top-4 w-40 h-40 text-gray-500 opacity-5 pointer-events-none transform rotate-12 transition-transform duration-500 group-hover:rotate-6 group-hover:scale-110" viewBox="0 0 100 100">
@@ -702,7 +702,7 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
                         <p class="text-[10px] text-gray-500 mt-1 font-medium">{} {}</p>
                     </div>
 
-                    <div class="z-10 flex justify-between items-end mt-2 pt-2">
+                    <div class="z-10 flex justify-between items-end pt-1">
                         <span class="text-[9px] font-semibold text-gray-400 tracking-wider">108 Keys</span>
                         <div class="flex items-center space-x-3">
                             <button onclick="toggleFav(event, '{}')" class="text-gray-300 hover:text-yellow-500 transition-all duration-200 active:scale-90 hover:scale-110">
