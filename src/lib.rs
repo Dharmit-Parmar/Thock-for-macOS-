@@ -736,6 +736,9 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
         let current_vol = VOL.load(std::sync::atomic::Ordering::Relaxed).to_string();
         let final_html = html_template
             .replace("<!-- MAIN_LOGO -->", crate::assets::IMG_MAIN_LOGO)
+            .replace("<!-- IMG_ICON_RAIN -->", crate::assets::IMG_ICON_RAIN)
+            .replace("<!-- IMG_ICON_WIND -->", crate::assets::IMG_ICON_WIND)
+            .replace("<!-- IMG_ICON_THUNDER -->", crate::assets::IMG_ICON_THUNDER)
             .replace("<!-- PACKS_LIST -->", &packs_html)
             .replace("<!-- VOL_VALUE -->", &current_vol)
             .replace("<!-- PACK_OPTIONS -->", &packs_options)

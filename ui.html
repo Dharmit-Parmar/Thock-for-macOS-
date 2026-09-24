@@ -211,19 +211,30 @@
                         <p class="text-gray-500 mt-1 font-medium">Set the perfect atmosphere.</p>
                     </div>
 
-                    <div class="flex flex-col space-y-3 p-4 bg-white/70 rounded-xl border border-black/10">
-                        <label class="font-bold text-gray-700 mb-1">Environment Layers</label>
-                        <div class="flex items-center justify-between">
-                            <span class="text-sm font-semibold text-gray-600">Rain</span>
-                            <input type="checkbox" id="asmr-rain-on" class="w-5 h-5 accent-orange-400" onchange="toggleAsmrSettings()">
-                        </div>
-                        <div class="flex items-center justify-between">
-                            <span class="text-sm font-semibold text-gray-600">Wind</span>
-                            <input type="checkbox" id="asmr-wind-on" class="w-5 h-5 accent-orange-400" onchange="toggleAsmrSettings()">
-                        </div>
-                        <div class="flex items-center justify-between">
-                            <span class="text-sm font-semibold text-gray-600">Thunder</span>
-                            <input type="checkbox" id="asmr-thunder-on" class="w-5 h-5 accent-orange-400" onchange="toggleAsmrSettings()">
+                    <div class="p-4 bg-white/70 rounded-xl border border-black/10">
+                        <label class="font-bold text-gray-700 block mb-3">Environment Layers</label>
+                        <div class="flex gap-3">
+                            <label class="flex-1 cursor-pointer">
+                                <input type="checkbox" id="asmr-rain-on" class="peer hidden" onchange="toggleAsmrSettings()">
+                                <div class="flex flex-col items-center justify-center p-3 rounded-xl border-2 border-black/5 bg-white/50 hover:bg-white transition-all peer-checked:border-orange-400 peer-checked:bg-orange-50 peer-checked:shadow-sm peer-checked:[&>img]:opacity-100 peer-checked:[&>span]:text-orange-600">
+                                    <img src="<!-- IMG_ICON_RAIN -->" class="w-8 h-8 mb-2 mix-blend-multiply opacity-50 transition-opacity">
+                                    <span class="text-xs font-bold text-gray-500 peer-checked:text-orange-600">Rain</span>
+                                </div>
+                            </label>
+                            <label class="flex-1 cursor-pointer">
+                                <input type="checkbox" id="asmr-wind-on" class="peer hidden" onchange="toggleAsmrSettings()">
+                                <div class="flex flex-col items-center justify-center p-3 rounded-xl border-2 border-black/5 bg-white/50 hover:bg-white transition-all peer-checked:border-orange-400 peer-checked:bg-orange-50 peer-checked:shadow-sm peer-checked:[&>img]:opacity-100 peer-checked:[&>span]:text-orange-600">
+                                    <img src="<!-- IMG_ICON_WIND -->" class="w-8 h-8 mb-2 mix-blend-multiply opacity-50 transition-opacity">
+                                    <span class="text-xs font-bold text-gray-500 peer-checked:text-orange-600">Wind</span>
+                                </div>
+                            </label>
+                            <label class="flex-1 cursor-pointer">
+                                <input type="checkbox" id="asmr-thunder-on" class="peer hidden" onchange="toggleAsmrSettings()">
+                                <div class="flex flex-col items-center justify-center p-3 rounded-xl border-2 border-black/5 bg-white/50 hover:bg-white transition-all peer-checked:border-orange-400 peer-checked:bg-orange-50 peer-checked:shadow-sm peer-checked:[&>img]:opacity-100 peer-checked:[&>span]:text-orange-600">
+                                    <img src="<!-- IMG_ICON_THUNDER -->" class="w-8 h-8 mb-2 mix-blend-multiply opacity-50 transition-opacity">
+                                    <span class="text-xs font-bold text-gray-500 peer-checked:text-orange-600">Thunder</span>
+                                </div>
+                            </label>
                         </div>
                     </div>
 
