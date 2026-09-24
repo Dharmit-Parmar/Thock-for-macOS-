@@ -308,7 +308,7 @@ pub fn run(is_cli: bool) {
         };
         // ── ASMR: three independent real-audio layers ────────────────────────
         // Embedded files compiled into the binary.
-        static RAIN_MP3: &[u8] = include_bytes!("../assets/asmr/rain.mp3");
+        static RAIN_OGG: &[u8] = include_bytes!("../assets/asmr/rain.ogg");
         static WIND_OGG: &[u8] = include_bytes!("../assets/asmr/wind.ogg");
         static THUNDER_OGG: &[u8] = include_bytes!("../assets/asmr/thunder.ogg");
 
@@ -319,7 +319,7 @@ pub fn run(is_cli: bool) {
         });
         rain_sink.set_volume(0.0);
         {
-            let src = Decoder::new(std::io::Cursor::new(RAIN_MP3)).unwrap().repeat_infinite().convert_samples::<f32>();
+            let src = Decoder::new(std::io::Cursor::new(RAIN_OGG)).unwrap().repeat_infinite().convert_samples::<f32>();
             rain_sink.append(src);
         }
         rain_sink.play();
