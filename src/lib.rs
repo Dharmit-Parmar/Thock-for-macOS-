@@ -1,3 +1,4 @@
+mod assets;
 mod keymap;
 mod dsp;
 
@@ -622,19 +623,44 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
             let display_name = pack.replace("_", " ").to_uppercase();
             let safe_id = pack.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect::<String>();
             
+            let mut hash_val = 0usize;
+            for b in display_name.bytes() { hash_val = hash_val.wrapping_add(b as usize); }
+            
+            let img_src = if display_name.to_lowercase().contains("panda") {
+                crate::assets::IMG_PANDA
+            } else if display_name.to_lowercase().contains("blue") {
+                crate::assets::IMG_BLUE
+            } else if display_name.to_lowercase().contains("red") {
+                crate::assets::IMG_RED
+            } else if display_name.to_lowercase().contains("black") {
+                crate::assets::IMG_BLACK
+            } else if display_name.to_lowercase().contains("alpaca") {
+                crate::assets::IMG_ALPACA
+            } else {
+                let images = [
+                    crate::assets::IMG_PANDA,
+                    crate::assets::IMG_BLUE,
+                    crate::assets::IMG_RED,
+                    crate::assets::IMG_BLACK,
+                    crate::assets::IMG_ALPACA,
+                ];
+                images[hash_val % images.len()]
+            };
+
+            
             // Dynamic switch properties based on name
             let lower_name = pack.to_lowercase();
-            let (stem_color, switch_type, act_weight) = if lower_name.contains("blue") {
+            let (stem_color, switch_type, act_weight) = if display_name.to_lowercase().contains("blue") {
                 ("#3b82f6", "Clicky", "60g")
-            } else if lower_name.contains("brown") {
+            } else if display_name.to_lowercase().contains("brown") {
                 ("#92400e", "Tactile", "55g")
-            } else if lower_name.contains("red") {
+            } else if display_name.to_lowercase().contains("red") {
                 ("#ef4444", "Linear", "45g")
-            } else if lower_name.contains("black") {
+            } else if display_name.to_lowercase().contains("black") {
                 ("#1f2937", "Linear", "60g")
-            } else if lower_name.contains("holy") || lower_name.contains("panda") {
+            } else if display_name.to_lowercase().contains("holy") || lower_name.contains("panda") {
                 ("#f59e0b", "Tactile", "67g")
-            } else if lower_name.contains("cream") {
+            } else if display_name.to_lowercase().contains("cream") {
                 ("#fef3c7", "Linear", "55g")
             } else {
                 ("#a8a29e", "Linear", "50g")
@@ -653,15 +679,9 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
                     </svg>
 
                     <div class="z-10">
-                        <!-- Switch Icon SVG -->
-                        <div class="w-9 h-9 mb-2.5 transition-transform duration-300 group-hover:scale-110 group-active:scale-95">
-                            <svg viewBox="0 0 48 48" fill="none" class="drop-shadow-sm">
-                                <rect x="12" y="24" width="24" height="20" rx="3" fill="#f4f4f5" stroke="#d4d4d8" stroke-width="2"/>
-                                <path d="M8 24 h32 v5 H8 z" fill="#e4e4e7" stroke="#d4d4d8" stroke-width="2"/>
-                                <rect x="18" y="10" width="12" height="14" fill="{}" stroke="rgba(0,0,0,0.1)" stroke-width="1"/>
-                                <path d="M22 12 h4 v10 h-4 z" fill="#ffffff" opacity="0.3"/>
-                                <path d="M19 15 h10 v4 h-10 z" fill="#ffffff" opacity="0.3"/>
-                            </svg>
+                        <!-- Switch Icon -->
+                        <div class="w-11 h-11 mb-2.5 transition-transform duration-300 group-hover:scale-110 group-active:scale-95">
+                            <img src="{}" class="w-full h-full object-contain drop-shadow-md" alt="switch" />
                         </div>
                         <h3 class="font-bold text-gray-800 text-[16px] leading-tight truncate tracking-tight">{}</h3>
                         <p class="text-xs text-gray-500 mt-1 font-medium">{} {}</p>
@@ -679,7 +699,7 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
                         </div>
                     </div>
                 </div>
-            "##, safe_id, pack, is_fav, active_card_class, stem_color, display_name, switch_type, act_weight, pack, safe_id, fav_class, pack);
+            "##, safe_id, pack, is_fav, active_card_class, img_src, display_name, switch_type, act_weight, pack, safe_id, fav_class, pack);
             
             packs_html.push_str(&card);
         }
