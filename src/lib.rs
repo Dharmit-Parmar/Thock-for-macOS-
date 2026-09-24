@@ -628,6 +628,8 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
             
             let img_src = if display_name.to_lowercase().contains("panda") {
                 crate::assets::IMG_PANDA
+            } else if display_name.to_lowercase().contains("creamy heavy") || display_name.to_lowercase().contains("steelseries") || display_name.to_lowercase().contains("nk cream") {
+                crate::assets::IMG_NEW_BLUE
             } else if display_name.to_lowercase().contains("blue") {
                 crate::assets::IMG_BLUE
             } else if display_name.to_lowercase().contains("red") {
@@ -667,7 +669,7 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
             };
 
             let card = format!(r##"
-                <div id="pack-{}" onclick="selectPack('{}')" data-fav="{}" class="pack-card relative bg-white/50 backdrop-blur-md hover:bg-white hover:-translate-y-1 hover:shadow-xl border {} rounded-2xl p-5 transition-all duration-300 ease-[cubic-bezier(0.25,0.8,0.25,1)] cursor-pointer flex flex-col justify-between h-40 overflow-hidden shadow-sm group">
+                <div id="pack-{}" onclick="selectPack('{}')" data-fav="{}" class="pack-card relative bg-white/50 backdrop-blur-md hover:bg-white hover:-translate-y-1 hover:shadow-xl border {} rounded-xl p-5 transition-all duration-300 ease-[cubic-bezier(0.25,0.8,0.25,1)] cursor-pointer flex flex-col justify-between h-40 overflow-hidden shadow-sm group">
 
                     <!-- Keyboard Watermark SVG -->
                     <svg class="absolute -right-6 -top-4 w-40 h-40 text-gray-500 opacity-5 pointer-events-none transform rotate-12 transition-transform duration-500 group-hover:rotate-6 group-hover:scale-110" viewBox="0 0 100 100">
