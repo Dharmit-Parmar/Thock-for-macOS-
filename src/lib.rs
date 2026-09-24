@@ -612,15 +612,15 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
             let is_active = *pack == current_pack_read;
             let is_fav = favs.contains(pack);
             
-            let active_badge = if is_active {
+            let _active_badge = if is_active {
                 r#"inline-block"#
             } else { "none" };
             
-            let active_card_class = if is_active { "border-pink-300 ring-2 ring-pink-200" } else { "border-white/50" };
+            let active_card_class = if is_active { "border-orange-300 ring-2 ring-orange-200" } else { "border-white/50" };
             
             let fav_class = if is_fav { "text-yellow-500 fill-current" } else { "text-gray-400" };
 
-            let display_name = pack.replace("_", " ").to_uppercase();
+            let display_name = pack.split("_").map(|w| { let mut c = w.chars(); match c.next() { None => String::new(), Some(f) => f.to_uppercase().collect::<String>() + c.as_str(), } }).collect::<Vec<_>>().join(" ");
             let safe_id = pack.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect::<String>();
             
             let mut hash_val = 0usize;
@@ -650,7 +650,7 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
             
             // Dynamic switch properties based on name
             let lower_name = pack.to_lowercase();
-            let (stem_color, switch_type, act_weight) = if display_name.to_lowercase().contains("blue") {
+            let (_stem_color, switch_type, act_weight) = if display_name.to_lowercase().contains("blue") {
                 ("#3b82f6", "Clicky", "60g")
             } else if display_name.to_lowercase().contains("brown") {
                 ("#92400e", "Tactile", "55g")
@@ -668,9 +668,11 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
 
             let card = format!(r##"
                 <div id="pack-{}" onclick="selectPack('{}')" data-fav="{}" class="pack-card relative bg-white/50 backdrop-blur-md hover:bg-white hover:-translate-y-1 hover:shadow-xl border {} rounded-2xl p-5 transition-all duration-300 ease-[cubic-bezier(0.25,0.8,0.25,1)] cursor-pointer flex flex-col justify-between h-40 overflow-hidden shadow-sm group">
-                    
-                    
 
+                    <!-- Keyboard Watermark SVG -->
+                    <svg class="absolute -right-6 -top-4 w-40 h-40 text-gray-500 opacity-5 pointer-events-none transform rotate-12 transition-transform duration-500 group-hover:rotate-6 group-hover:scale-110" viewBox="0 0 100 100">
+                        <path fill="currentColor" d="M10 30 h80 v40 h-80 z M15 35 h8 v8 h-8 z M25 35 h8 v8 h-8 z M35 35 h8 v8 h-8 z M45 35 h8 v8 h-8 z M55 35 h8 v8 h-8 z M65 35 h8 v8 h-8 z M75 35 h8 v8 h-8 z M18 48 h8 v8 h-8 z M28 48 h8 v8 h-8 z M38 48 h8 v8 h-8 z M48 48 h8 v8 h-8 z M58 48 h8 v8 h-8 z M68 48 h8 v8 h-8 z M30 61 h40 v8 h-40 z"/>
+                    </svg>
                     <div class="z-10">
                         <!-- Switch Icon -->
                         <div class="w-11 h-11 mb-2.5 transition-transform duration-300 group-hover:scale-110 group-active:scale-95">
@@ -681,7 +683,7 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
                     </div>
 
                     <div class="z-10 flex justify-between items-end mt-2 pt-2">
-                        <span class="text-[11px] font-semibold text-gray-400 tracking-wider">108 KEYS</span>
+                        <span class="text-[11px] font-semibold text-gray-400 tracking-wider">108 Keys</span>
                         <div class="flex items-center space-x-3">
                             <button onclick="toggleFav(event, '{}')" class="text-gray-300 hover:text-yellow-500 transition-all duration-200 active:scale-90 hover:scale-110">
                                 <svg id="fav-{}" class="w-5 h-5 {} drop-shadow-sm" viewBox="0 0 20 20" stroke="currentColor" stroke-width="1.5" fill="none"><path stroke-linecap="round" stroke-linejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"></path></svg>
@@ -699,7 +701,7 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
         
         let mut packs_options = String::new();
         for pack in &sorted_packs {
-            let display_name = pack.replace("_", " ").to_uppercase();
+            let display_name = pack.split("_").map(|w| { let mut c = w.chars(); match c.next() { None => String::new(), Some(f) => f.to_uppercase().collect::<String>() + c.as_str(), } }).collect::<Vec<_>>().join(" ");
             let selected = if &current_pack_read == pack { "selected" } else { "" };
             packs_options.push_str(&format!("<option value='{}' {}>{}</option>", pack, selected, display_name));
         }
