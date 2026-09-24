@@ -49,6 +49,17 @@ impl Biquad {
         let b = (1.0 + cw) / 2.0;
         Self { b0: b*a0r, b1: -(1.0+cw)*a0r, b2: b*a0r, a1: -2.0*cw*a0r, a2: (1.0-alpha)*a0r, s1:0.0, s2:0.0 }
     }
+    pub fn set_highpass(&mut self, sr: f32, fc: f32, q: f32) {
+        let w = 2.0 * std::f32::consts::PI * (fc / sr).min(0.499);
+        let cw = w.cos(); let alpha = w.sin() / (2.0 * q);
+        let a0r = 1.0 / (1.0 + alpha);
+        let b = (1.0 + cw) / 2.0;
+        self.b0 = b*a0r;
+        self.b1 = -(1.0+cw)*a0r;
+        self.b2 = b*a0r;
+        self.a1 = -2.0*cw*a0r;
+        self.a2 = (1.0-alpha)*a0r;
+    }
     pub fn bandpass(sr: f32, fc: f32, q: f32) -> Self {
         let w = 2.0 * std::f32::consts::PI * (fc / sr).min(0.499);
         let cw = w.cos(); let alpha = w.sin() / (2.0 * q);
@@ -507,11 +518,16 @@ impl Iterator for AsmrSource {
         
         // Rain is highpassed pink noise + sporadic intense crackles (drops)
         let mut drop = 0.0;
-        if self.prng.next_f32().abs() < (0.002 * rain_dens) {
-            drop = white * 1.5;
+        if rain_dens > 0.01 && self.prng.next_f32().abs() < (0.001 + 0.008 * rain_dens) {
+            drop = white * (1.0 + rain_dens);
         }
+        
+        // Lower cutoff frequency for heavier rain (more rumble/body)
+        let rain_cutoff = 1800.0 - (rain_dens * 1400.0);
+        self.rain_hpf.set_highpass(44100.0, rain_cutoff, 0.6);
+        
         let rain_base = self.rain_hpf.process(pink + drop);
-        let rain = rain_base * rain_v * (0.3 + rain_dens * 0.7) * 0.35;
+        let rain = rain_base * rain_v * (0.1 + rain_dens * 0.9) * 0.8;
         out += rain;
 
         // --- THUNDER ---

@@ -229,19 +229,60 @@
                     </div>
 
                     <div id="asmr-rain-settings" class="space-y-8 hidden fade-in">
-                        <div class="space-y-3">
-                            <div class="flex justify-between text-xs font-bold text-gray-500 uppercase tracking-wider">
-                                <span>Rain Density</span>
-                                <span>Heavy</span>
+                        <div class="space-y-6">
+                            <h3 class="text-lg font-bold text-gray-800 border-b border-black/10 pb-2">Rain</h3>
+                            <div class="space-y-3">
+                                <div class="flex justify-between text-xs font-bold text-gray-500 uppercase tracking-wider">
+                                    <span>Density / Intensity</span>
+                                </div>
+                                <input type="range" id="asmr-rain-density" min="0" max="100" value="50" class="w-full custom-slider" oninput="updateAsmr()">
                             </div>
-                            <input type="range" id="asmr-rain-density" min="0" max="100" value="50" class="w-full custom-slider" oninput="updateAsmr()">
+                            <div class="space-y-3">
+                                <div class="flex justify-between text-xs font-bold text-gray-500 uppercase tracking-wider">
+                                    <span>Volume</span>
+                                </div>
+                                <input type="range" id="asmr-rain-vol" min="0" max="100" value="70" class="w-full custom-slider" oninput="updateAsmr()">
+                            </div>
                         </div>
-                        <div class="space-y-3">
-                            <div class="flex justify-between text-xs font-bold text-gray-500 uppercase tracking-wider">
-                                <span>Wind Speed</span>
-                                <span>Gale</span>
+
+                        <div class="space-y-6">
+                            <h3 class="text-lg font-bold text-gray-800 border-b border-black/10 pb-2">Wind</h3>
+                            <div class="space-y-3">
+                                <div class="flex justify-between text-xs font-bold text-gray-500 uppercase tracking-wider">
+                                    <span>Speed</span>
+                                </div>
+                                <input type="range" id="asmr-wind-density" min="0" max="100" value="30" class="w-full custom-slider" oninput="updateAsmr()">
                             </div>
-                            <input type="range" id="asmr-wind-density" min="0" max="100" value="30" class="w-full custom-slider" oninput="updateAsmr()">
+                            <div class="space-y-3">
+                                <div class="flex justify-between text-xs font-bold text-gray-500 uppercase tracking-wider">
+                                    <span>Volume</span>
+                                </div>
+                                <input type="range" id="asmr-wind-vol" min="0" max="100" value="40" class="w-full custom-slider" oninput="updateAsmr()">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div id="asmr-thunder-settings" class="space-y-8 hidden fade-in">
+                        <div class="space-y-6">
+                            <h3 class="text-lg font-bold text-gray-800 border-b border-black/10 pb-2">Thunderstorm</h3>
+                            <div class="space-y-3">
+                                <div class="flex justify-between text-xs font-bold text-gray-500 uppercase tracking-wider">
+                                    <span>Frequency</span>
+                                </div>
+                                <input type="range" id="asmr-thunder-delay" min="0" max="100" value="50" class="w-full custom-slider" oninput="updateAsmr()">
+                            </div>
+                            <div class="space-y-3">
+                                <div class="flex justify-between text-xs font-bold text-gray-500 uppercase tracking-wider">
+                                    <span>Intensity</span>
+                                </div>
+                                <input type="range" id="asmr-thunder-int" min="0" max="100" value="70" class="w-full custom-slider" oninput="updateAsmr()">
+                            </div>
+                            <div class="space-y-3">
+                                <div class="flex justify-between text-xs font-bold text-gray-500 uppercase tracking-wider">
+                                    <span>Volume</span>
+                                </div>
+                                <input type="range" id="asmr-thunder-vol" min="0" max="100" value="80" class="w-full custom-slider" oninput="updateAsmr()">
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -379,9 +420,12 @@
             type: type,
             master_vol: parseInt(document.getElementById('asmr-vol').value),
             rain_density: parseInt(document.getElementById('asmr-rain-density').value),
+            rain_vol: parseInt(document.getElementById('asmr-rain-vol').value),
             wind_density: parseInt(document.getElementById('asmr-wind-density').value),
-            rain_vol: 70, // using defaults or sliders
-            wind_vol: 50,
+            wind_vol: parseInt(document.getElementById('asmr-wind-vol').value),
+            thunder_delay: parseInt(document.getElementById('asmr-thunder-delay').value),
+            thunder_int: parseInt(document.getElementById('asmr-thunder-int').value),
+            thunder_vol: parseInt(document.getElementById('asmr-thunder-vol').value),
         };
         safeIpc({ type: "asmr_update", value: settings });
     }
