@@ -42,7 +42,25 @@ impl Biquad {
         self.a2 = (1.0-alpha)*a0r;
     }
 
-    pub fn highpass(sr: f32, fc: f32, q: f32) -> Self {
+    
+    pub fn notch(sr: f32, fc: f32, q: f32) -> Self {
+        let w0 = 2.0 * std::f32::consts::PI * fc / sr;
+        let alpha = w0.sin() / (2.0 * q.max(0.1));
+        let cos_w0 = w0.cos();
+        
+        let a0 = 1.0 + alpha;
+        let b0 = 1.0 / a0;
+        let b1 = (-2.0 * cos_w0) / a0;
+        let b2 = 1.0 / a0;
+        let a1 = (-2.0 * cos_w0) / a0;
+        let a2 = (1.0 - alpha) / a0;
+
+        Self {
+            b0, b1, b2, a1, a2,
+            s1: 0.0, s2: 0.0,
+        }
+    }
+pub fn highpass(sr: f32, fc: f32, q: f32) -> Self {
         let w = 2.0 * std::f32::consts::PI * (fc / sr).min(0.499);
         let cw = w.cos(); let alpha = w.sin() / (2.0 * q);
         let a0r = 1.0 / (1.0 + alpha);
@@ -437,34 +455,50 @@ pub static ASMR_THUNDER_VOL: AtomicU32 = AtomicU32::new(80);
 
 pub struct AsmrSource {
     prng: PRNG,
-    
-    // Pink noise state for Rain
     b0: f32, b1: f32, b2: f32, b3: f32, b4: f32, b5: f32, b6: f32,
-    
-    // Brown noise state for Wind/Thunder
     brown: f32,
-    
     wind_lpf: Biquad,
     rain_hpf: Biquad,
+    rain_body_lpf: Biquad,
+    rain_drop_bpf: Biquad,
+    rain_drop_env: f32,
+    rain_lfo_phase: f32,
     thunder_lpf: Biquad,
-    
     thunder_env: f32,
     thunder_timer: u32,
+    thunder_crack_env: f32,
+    thunder_crack_bpf: Biquad,
+    thunder_hump2_env: f32,
+    thunder_hump2_timer: u32,
     phase: f32,
+    master_notch: Biquad,
 }
 
 impl AsmrSource {
     pub fn new(sr: u32) -> Self {
+        let srf = sr as f32;
         Self {
             prng: PRNG::new(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos() as u32),
             b0: 0.0, b1: 0.0, b2: 0.0, b3: 0.0, b4: 0.0, b5: 0.0, b6: 0.0,
             brown: 0.0,
-            wind_lpf: Biquad::lowpass(sr as f32, 400.0, 0.5),
-            rain_hpf: Biquad::highpass(sr as f32, 1200.0, 0.7),
-            thunder_lpf: Biquad::lowpass(sr as f32, 200.0, 0.5),
+            wind_lpf: Biquad::lowpass(srf, 400.0, 0.5),
+            
+            rain_hpf: Biquad::highpass(srf, 1200.0, 0.7),
+            rain_body_lpf: Biquad::lowpass(srf, 400.0, 0.5),
+            rain_drop_bpf: Biquad::bandpass(srf, 3500.0, 1.0),
+            rain_drop_env: 0.0,
+            rain_lfo_phase: 0.0,
+            
+            thunder_lpf: Biquad::lowpass(srf, 200.0, 0.5),
             thunder_env: 0.0,
             thunder_timer: sr * 2,
+            thunder_crack_env: 0.0,
+            thunder_crack_bpf: Biquad::bandpass(srf, 1500.0, 0.8),
+            thunder_hump2_env: 0.0,
+            thunder_hump2_timer: 0,
+            
             phase: 0.0,
+            master_notch: Biquad::notch(srf, 2000.0, 0.5),
         }
     }
 }
@@ -524,18 +558,34 @@ impl Iterator for AsmrSource {
             let rain_dens = ASMR_RAIN_DENS.load(Ordering::Relaxed) as f32 / 100.0;
             let rain_v = ASMR_RAIN_VOL.load(Ordering::Relaxed) as f32 / 100.0;
             
-            // Rain is highpassed pink noise + sporadic intense crackles (drops)
-            let mut drop = 0.0;
-            if rain_dens > 0.01 && self.prng.next_f32().abs() < (0.001 + 0.008 * rain_dens) {
-                drop = white * (1.0 + rain_dens);
+            // Subtly modulate rain filter cutoff over time
+            self.rain_lfo_phase += 0.00003;
+            if self.rain_lfo_phase > std::f32::consts::PI * 2.0 { self.rain_lfo_phase -= std::f32::consts::PI * 2.0; }
+            let rain_lfo = (self.rain_lfo_phase.sin() * 0.5) + 0.5;
+
+            // Trigger a new drop envelope occasionally
+            if rain_dens > 0.01 && self.prng.next_f32().abs() < (0.0001 + 0.003 * rain_dens) {
+                self.rain_drop_env = 1.0;
             }
             
-            // Lower cutoff frequency for heavier rain (more rumble/body)
-            let rain_cutoff = 1800.0 - (rain_dens * 1400.0);
-            self.rain_hpf.set_highpass(44100.0, rain_cutoff, 0.6);
+            // Decay drop envelope over ~1ms (very fast decay)
+            self.rain_drop_env -= 0.02;
+            if self.rain_drop_env < 0.0 { self.rain_drop_env = 0.0; }
+
+            // Apply bandpass to the drop to simulate "tick" sound (3-5kHz)
+            let drop_sound = self.rain_drop_bpf.process(white) * self.rain_drop_env * (1.0 + rain_dens * 0.5) * 4.0;
             
-            let rain_base = self.rain_hpf.process(pink + drop);
-            let rain = rain_base * rain_v * 0.8;
+            // Lower cutoff frequency for heavier rain (more rumble/body), modulated gently
+            let rain_cutoff = 1800.0 - (rain_dens * 1200.0) + (rain_lfo * 300.0);
+            self.rain_hpf.set_highpass(44100.0, rain_cutoff, 0.6);
+            let bright_patter = self.rain_hpf.process(pink);
+
+            // Add a warm lowpass body layer for weight
+            self.rain_body_lpf.set_lowpass(44100.0, 300.0 + (rain_dens * 300.0), 0.5);
+            let body_rumble = self.rain_body_lpf.process(brown) * 0.8;
+            
+            let rain_base = bright_patter + drop_sound + body_rumble;
+            let rain = rain_base * rain_v * 0.7; // slightly lower master scaling to account for new body
             out += rain;
         }
 
@@ -550,28 +600,60 @@ impl Iterator for AsmrSource {
             } else {
                 if self.prng.next_f32().abs() < 0.01 {
                     self.thunder_env = 1.0;
+                    self.thunder_crack_env = 1.0;
+                    
+                    // Setup secondary delayed rumble hump
+                    self.thunder_hump2_timer = 44100 / 2 + (self.prng.next_f32().abs() * 44100.0) as u32; 
+
                     let next_base = 44100 * 5; 
                     let next_var = 44100 * 15;
                     let freq_factor = 1.0 - (t_freq as f32 / 100.0); 
                     self.thunder_timer = next_base + (self.prng.next_f32().abs() * next_var as f32 * freq_factor) as u32;
                 }
             }
-
-            if self.thunder_env > 0.0 {
-                // Thunder is violently low-passed brown noise with a long decaying envelope
-                self.thunder_lpf.set_lowpass(44100.0, 80.0 + self.thunder_env * 300.0 * t_int, 0.4 + self.thunder_env * 0.4);
-                let strike = self.thunder_lpf.process(brown * 3.5);
-                out += strike * self.thunder_env * t_vol * 1.5;
-                
-                // Extremely slow decay for natural rumble
-                self.thunder_env -= 0.000005;
-                if self.thunder_env < 0.0 {
-                    self.thunder_env = 0.0;
+            
+            if self.thunder_hump2_timer > 0 {
+                self.thunder_hump2_timer -= 1;
+                if self.thunder_hump2_timer == 0 {
+                    self.thunder_hump2_env = 0.6; // Secondary rumble is quieter
                 }
             }
+
+            let mut strike_out = 0.0;
+
+            // 1. Transient Crack (fast decay, bandpassed)
+            if self.thunder_crack_env > 0.0 {
+                let crack_sound = self.thunder_crack_bpf.process(white);
+                strike_out += crack_sound * self.thunder_crack_env * 0.7 * t_int;
+                self.thunder_crack_env -= 0.0003; // Decays over ~75ms
+                if self.thunder_crack_env < 0.0 { self.thunder_crack_env = 0.0; }
+            }
+
+            // 2. Main lowpass rumble
+            if self.thunder_env > 0.0 {
+                self.thunder_lpf.set_lowpass(44100.0, 80.0 + self.thunder_env * 300.0 * t_int, 0.4 + self.thunder_env * 0.4);
+                let strike = self.thunder_lpf.process(brown * 3.5);
+                strike_out += strike * self.thunder_env;
+                
+                // Extremely slow decay for natural rumble
+                self.thunder_env -= 0.000008;
+                if self.thunder_env < 0.0 { self.thunder_env = 0.0; }
+            }
+            
+            // 3. Secondary lowpass hump
+            if self.thunder_hump2_env > 0.0 {
+                let strike2 = self.thunder_lpf.process(brown * 3.0); // Reuse same filter for simplicity
+                strike_out += strike2 * self.thunder_hump2_env;
+                self.thunder_hump2_env -= 0.000005;
+                if self.thunder_hump2_env < 0.0 { self.thunder_hump2_env = 0.0; }
+            }
+
+            out += strike_out * t_vol * 1.3;
         }
 
-        Some(out * m_vol)
+        // Apply general calmness EQ (notch around 2kHz to remove harshness)
+        let final_out = self.master_notch.process(out) * m_vol;
+        Some(final_out)
     }
 }
 
