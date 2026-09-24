@@ -578,6 +578,22 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
     }
 
     let event_loop = tao::event_loop::EventLoop::new();
+
+    // Setup native macOS menu bar so Cmd+Q, Cmd+M, Cmd+W work perfectly globally
+    let menu_bar = muda::Menu::new();
+    let app_m = muda::Submenu::new("Thock", true);
+    let _ = app_m.append_items(&[&muda::PredefinedMenuItem::quit(None)]);
+    let _ = menu_bar.append(&app_m);
+    
+    let window_m = muda::Submenu::new("Window", true);
+    let _ = window_m.append_items(&[
+        &muda::PredefinedMenuItem::minimize(None),
+        &muda::PredefinedMenuItem::close_window(None),
+    ]);
+    let _ = menu_bar.append(&window_m);
+    #[cfg(target_os = "macos")]
+    menu_bar.init_for_nsapp();
+
     
     // UI Builder function to allow dynamic recreation of the window and webview
     // without leaking 200MB of WebKit memory when the window is closed.
@@ -934,14 +950,25 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
             tao::event::Event::WindowEvent {
                 event: tao::event::WindowEvent::KeyboardInput {
                     event: tao::event::KeyEvent {
-                        logical_key: tao::keyboard::Key::Character(c),
+                        physical_key,
+                        state: tao::event::ElementState::Pressed,
                         ..
                     },
                     ..
                 },
                 ..
-            } if c == "q" && modifiers.contains(tao::keyboard::ModifiersState::SUPER) => {
-                *control_flow = tao::event_loop::ControlFlow::Exit;
+            } => {
+                if modifiers.contains(tao::keyboard::ModifiersState::SUPER) {
+                    if physical_key == tao::keyboard::KeyCode::KeyQ {
+                        *control_flow = tao::event_loop::ControlFlow::Exit;
+                    } else if physical_key == tao::keyboard::KeyCode::KeyW {
+                        ui = None; // Drop the window
+                    } else if physical_key == tao::keyboard::KeyCode::KeyM {
+                        if let Some((_, window)) = &ui {
+                            window.set_minimized(true);
+                        }
+                    }
+                }
             }
             _ => {}
         }
