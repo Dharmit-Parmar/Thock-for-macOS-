@@ -634,7 +634,7 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
                 r#"inline-block"#
             } else { "none" };
             
-            let active_card_class = if is_active { "border-orange-300 ring-2 ring-orange-200" } else { "border-white/50" };
+            let active_card_class = if is_active { "bg-[#beb3a6] border-orange-300 ring-2 ring-orange-200" } else { "bg-white/50 border-white/50" };
             
             let fav_class = if is_fav { "text-yellow-500 fill-current" } else { "text-gray-400" };
 
@@ -687,7 +687,7 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
             };
 
             let card = format!(r##"
-                <div id="pack-{}" onclick="selectPack('{}')" data-fav="{}" class="pack-card relative bg-white/50 backdrop-blur-md hover:bg-white hover:-translate-y-1 hover:shadow-xl border {} rounded-xl p-5 transition-all duration-300 ease-[cubic-bezier(0.25,0.8,0.25,1)] cursor-pointer flex flex-col justify-between h-40 overflow-hidden shadow-sm group">
+                <div id="pack-{}" onclick="selectPack('{}')" data-fav="{}" class="pack-card relative backdrop-blur-md hover:bg-white hover:-translate-y-1 hover:shadow-xl border {} rounded-xl p-3.5 transition-all duration-300 ease-[cubic-bezier(0.25,0.8,0.25,1)] cursor-pointer flex flex-col justify-between h-32 overflow-hidden shadow-sm group">
 
                     <!-- Keyboard Watermark SVG -->
                     <svg class="absolute -right-6 -top-4 w-40 h-40 text-gray-500 opacity-5 pointer-events-none transform rotate-12 transition-transform duration-500 group-hover:rotate-6 group-hover:scale-110" viewBox="0 0 100 100">
@@ -695,15 +695,15 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
                     </svg>
                     <div class="z-10">
                         <!-- Switch Icon -->
-                        <div class="w-11 h-11 mb-2.5 transition-transform duration-300 group-hover:scale-110 group-active:scale-95">
+                        <div class="w-9 h-9 mb-1.5 transition-transform duration-300 group-hover:scale-110 group-active:scale-95">
                             <img src="{}" class="w-full h-full object-contain drop-shadow-md" alt="switch" />
                         </div>
-                        <h3 class="font-bold text-gray-800 text-[16px] leading-tight truncate tracking-tight">{}</h3>
-                        <p class="text-xs text-gray-500 mt-1 font-medium">{} {}</p>
+                        <h3 class="font-bold text-gray-800 text-[14px] leading-tight truncate tracking-tight">{}</h3>
+                        <p class="text-[10px] text-gray-500 mt-1 font-medium">{} {}</p>
                     </div>
 
                     <div class="z-10 flex justify-between items-end mt-2 pt-2">
-                        <span class="text-[11px] font-semibold text-gray-400 tracking-wider">108 Keys</span>
+                        <span class="text-[9px] font-semibold text-gray-400 tracking-wider">108 Keys</span>
                         <div class="flex items-center space-x-3">
                             <button onclick="toggleFav(event, '{}')" class="text-gray-300 hover:text-yellow-500 transition-all duration-200 active:scale-90 hover:scale-110">
                                 <svg id="fav-{}" class="w-5 h-5 {} drop-shadow-sm" viewBox="0 0 20 20" stroke="currentColor" stroke-width="1.5" fill="none"><path stroke-linecap="round" stroke-linejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"></path></svg>
