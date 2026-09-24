@@ -274,6 +274,9 @@ pub fn run(is_cli: bool) {
                 return;
             }
         };
+        // Spawn the continuous ASMR background track
+        let _ = handle.play_raw(crate::dsp::AsmrSource::new(48000));
+
         // Cell<usize> provides interior mutability with zero overhead (no locks, no atomics).
         // CGEventTap requires Fn (not FnMut), so we can't mutate a plain usize directly.
         let default_idx = std::cell::Cell::new(0usize);
@@ -407,6 +410,7 @@ pub fn run(is_cli: bool) {
                     println!("  pack <name>    - Change the active sound pack (e.g. pack creamy)");
                     println!("  packs          - List all available sound packs");
                     println!("  proc           - View/Edit mathematical procedural settings");
+                    println!("  asmr           - View/Edit ASMR background audio settings (e.g. asmr rain, asmr vol 80)");
                     println!("  quit/exit      - Close the application");
                 },
                 "vol" => {
@@ -508,6 +512,55 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
                         println!("Usage: proc <property> <value>");
                     }
                 },
+                "asmr" => {
+                    if parts.len() == 1 {
+                        let mode = crate::dsp::ASMR_MODE.load(Ordering::Relaxed);
+                        println!("ASMR Status:");
+                        println!("  Mode: {}", match mode { 1 => "rain", 2 => "thunder", _ => "none" });
+                        println!("  Master Vol: {}%", crate::dsp::ASMR_MASTER_VOL.load(Ordering::Relaxed));
+                        if mode >= 1 {
+                            println!("  Rain Dens: {}%, Vol: {}%", crate::dsp::ASMR_RAIN_DENS.load(Ordering::Relaxed), crate::dsp::ASMR_RAIN_VOL.load(Ordering::Relaxed));
+                            println!("  Wind Dens: {}%, Vol: {}%", crate::dsp::ASMR_WIND_DENS.load(Ordering::Relaxed), crate::dsp::ASMR_WIND_VOL.load(Ordering::Relaxed));
+                        }
+                        if mode == 2 {
+                            println!("  Thunder Delay: {}%, Int: {}%, Vol: {}%", crate::dsp::ASMR_THUNDER_DELAY.load(Ordering::Relaxed), crate::dsp::ASMR_THUNDER_INT.load(Ordering::Relaxed), crate::dsp::ASMR_THUNDER_VOL.load(Ordering::Relaxed));
+                        }
+                        println!("\nUsage:");
+                        println!("  asmr none|rain|thunder");
+                        println!("  asmr <vol|rain_dens|wind_dens|rain_vol|wind_vol|thunder_delay|thunder_int|thunder_vol> <0-100>");
+                        continue;
+                    }
+                    
+                    let prop = parts[1];
+                    match prop {
+                        "none" => { crate::dsp::ASMR_MODE.store(0, Ordering::Relaxed); println!("✅ ASMR disabled"); },
+                        "rain" => { crate::dsp::ASMR_MODE.store(1, Ordering::Relaxed); println!("🌧️ ASMR set to Rain"); },
+                        "thunder" => { crate::dsp::ASMR_MODE.store(2, Ordering::Relaxed); println!("⛈️ ASMR set to Thunder"); },
+                        _ => {
+                            if parts.len() >= 3 {
+                                if let Ok(v) = parts[2].parse::<u32>() {
+                                    let v = v.clamp(0, 100);
+                                    match prop {
+                                        "vol" => crate::dsp::ASMR_MASTER_VOL.store(v, Ordering::Relaxed),
+                                        "rain_dens" => crate::dsp::ASMR_RAIN_DENS.store(v, Ordering::Relaxed),
+                                        "wind_dens" => crate::dsp::ASMR_WIND_DENS.store(v, Ordering::Relaxed),
+                                        "rain_vol" => crate::dsp::ASMR_RAIN_VOL.store(v, Ordering::Relaxed),
+                                        "wind_vol" => crate::dsp::ASMR_WIND_VOL.store(v, Ordering::Relaxed),
+                                        "thunder_delay" => crate::dsp::ASMR_THUNDER_DELAY.store(v, Ordering::Relaxed),
+                                        "thunder_int" => crate::dsp::ASMR_THUNDER_INT.store(v, Ordering::Relaxed),
+                                        "thunder_vol" => crate::dsp::ASMR_THUNDER_VOL.store(v, Ordering::Relaxed),
+                                        _ => { println!("Unknown ASMR property: {}", prop); continue; }
+                                    }
+                                    println!("✅ Set ASMR {} to {}", prop, v);
+                                } else {
+                                    println!("❌ Value must be a number from 0 to 100");
+                                }
+                            } else {
+                                println!("❌ Missing value. Usage: asmr {} <0-100>", prop);
+                            }
+                        }
+                    }
+                },
                 "quit" | "exit" => {
                     println!("Goodbye! 👋");
                     std::process::exit(0);
@@ -534,7 +587,7 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
         ipc_packs_dir: std::path::PathBuf,
         ipc_favorites: std::sync::Arc<std::sync::RwLock<std::collections::HashSet<String>>>,
         available_packs: &[String],
-    ) -> (tao::window::Window, wry::WebView) {
+    ) -> (wry::WebView, tao::window::Window) {
         let window = tao::window::WindowBuilder::new()
             .with_title("Thock")
             .with_inner_size(tao::dpi::LogicalSize::new(800.0, 600.0))
@@ -562,39 +615,71 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
                 r#"inline-block"#
             } else { "none" };
             
-            let active_card_class = if is_active { "border-pink-400 bg-white/70 shadow-md" } else { "bg-white/40" };
-            let active_anim = if is_active { "flex" } else { "none" };
+            let active_card_class = if is_active { "border-pink-300 ring-2 ring-pink-200" } else { "border-white/50" };
             
-            let fav_class = if is_fav { "text-yellow-400 fill-current" } else { "text-gray-400" };
+            let fav_class = if is_fav { "text-yellow-500 fill-current" } else { "text-gray-400" };
 
             let display_name = pack.replace("_", " ").to_uppercase();
             let safe_id = pack.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect::<String>();
+            
+            // Dynamic switch properties based on name
+            let lower_name = pack.to_lowercase();
+            let (stem_color, switch_type, act_weight) = if lower_name.contains("blue") {
+                ("#3b82f6", "Clicky", "60g")
+            } else if lower_name.contains("brown") {
+                ("#92400e", "Tactile", "55g")
+            } else if lower_name.contains("red") {
+                ("#ef4444", "Linear", "45g")
+            } else if lower_name.contains("black") {
+                ("#1f2937", "Linear", "60g")
+            } else if lower_name.contains("holy") || lower_name.contains("panda") {
+                ("#f59e0b", "Tactile", "67g")
+            } else if lower_name.contains("cream") {
+                ("#fef3c7", "Linear", "55g")
+            } else {
+                ("#a8a29e", "Linear", "50g")
+            };
 
-            let card = format!(r#"
-                <div id="pack-{}" onclick="selectPack('{}')" class="pack-card glass-card py-3.5 px-5 rounded-2xl cursor-pointer flex items-center justify-between group {} transition-all hover:bg-white/60 mb-2.5 border border-white/20">
-                    <div class="flex items-center space-x-3.5">
-                        <div class="w-10 h-10 rounded-full bg-pink-50 flex items-center justify-center shadow-sm text-pink-500">
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"></path></svg>
+            let card = format!(r##"
+                <div id="pack-{}" onclick="selectPack('{}')" data-fav="{}" class="pack-card relative bg-white/50 backdrop-blur-md hover:bg-white hover:-translate-y-1 hover:shadow-xl border {} rounded-2xl p-5 transition-all duration-300 ease-[cubic-bezier(0.25,0.8,0.25,1)] cursor-pointer flex flex-col justify-between h-40 overflow-hidden shadow-sm group">
+                    
+                    <!-- Keyboard Watermark SVG -->
+                    <svg class="absolute -right-6 -top-4 w-40 h-40 text-gray-500 opacity-5 pointer-events-none transform rotate-12 transition-transform duration-500 group-hover:rotate-6 group-hover:scale-110" viewBox="0 0 100 100">
+                        <g stroke="currentColor" stroke-width="2.5" fill="none">
+                            <rect x="10" y="10" width="20" height="20" rx="4"/><rect x="35" y="10" width="20" height="20" rx="4"/><rect x="60" y="10" width="20" height="20" rx="4"/>
+                            <rect x="10" y="35" width="20" height="20" rx="4"/><rect x="35" y="35" width="20" height="20" rx="4"/><rect x="60" y="35" width="20" height="20" rx="4"/>
+                            <rect x="10" y="60" width="45" height="20" rx="4"/><rect x="60" y="60" width="20" height="20" rx="4"/>
+                        </g>
+                    </svg>
+
+                    <div class="z-10">
+                        <!-- Switch Icon SVG -->
+                        <div class="w-9 h-9 mb-2.5 transition-transform duration-300 group-hover:scale-110 group-active:scale-95">
+                            <svg viewBox="0 0 48 48" fill="none" class="drop-shadow-sm">
+                                <rect x="12" y="24" width="24" height="20" rx="3" fill="#f4f4f5" stroke="#d4d4d8" stroke-width="2"/>
+                                <path d="M8 24 h32 v5 H8 z" fill="#e4e4e7" stroke="#d4d4d8" stroke-width="2"/>
+                                <rect x="18" y="10" width="12" height="14" fill="{}" stroke="rgba(0,0,0,0.1)" stroke-width="1"/>
+                                <path d="M22 12 h4 v10 h-4 z" fill="#ffffff" opacity="0.3"/>
+                                <path d="M19 15 h10 v4 h-10 z" fill="#ffffff" opacity="0.3"/>
+                            </svg>
                         </div>
-                        <div>
-                            <h3 class="font-bold text-gray-800 text-base flex items-center">
-                                {}
-                                <span class="active-badge ml-2 px-2 py-0.5 rounded-md bg-pink-200 text-pink-700 text-xs font-semibold tracking-wide uppercase" style="display: {}">Active</span>
-                            </h3>
-                        </div>
+                        <h3 class="font-bold text-gray-800 text-[16px] leading-tight truncate tracking-tight">{}</h3>
+                        <p class="text-xs text-gray-500 mt-1 font-medium">{} {}</p>
                     </div>
-                    <div class="flex items-center space-x-3">
-                        <button onclick="toggleFav(event, '{}')" class="w-8 h-8 rounded-full bg-white/50 flex items-center justify-center hover:bg-white shadow-sm transition-all">
-                            <svg id="fav-{}" class="w-5 h-5 {}" viewBox="0 0 20 20" stroke="currentColor" stroke-width="1.5" fill="none"><path stroke-linecap="round" stroke-linejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"></path></svg>
-                        </button>
-                        <div class="active-anim space-x-1" style="display: {};">
-                            <div class="w-1.5 h-4 bg-pink-400 rounded-full animate-bounce" style="animation-delay: 0s;"></div>
-                            <div class="w-1.5 h-5 bg-pink-400 rounded-full animate-bounce" style="animation-delay: 0.1s;"></div>
-                            <div class="w-1.5 h-3 bg-pink-400 rounded-full animate-bounce" style="animation-delay: 0.2s;"></div>
+
+                    <div class="z-10 flex justify-between items-end mt-2 pt-2">
+                        <span class="text-[11px] font-semibold text-gray-400 tracking-wider">108 KEYS</span>
+                        <div class="flex items-center space-x-3">
+                            <button onclick="toggleFav(event, '{}')" class="text-gray-300 hover:text-yellow-500 transition-all duration-200 active:scale-90 hover:scale-110">
+                                <svg id="fav-{}" class="w-5 h-5 {} drop-shadow-sm" viewBox="0 0 20 20" stroke="currentColor" stroke-width="1.5" fill="none"><path stroke-linecap="round" stroke-linejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"></path></svg>
+                            </button>
+                            <button onclick="deletePack(event, '{}')" class="text-gray-300 hover:text-red-500 transition-all duration-200 active:scale-90 hover:scale-110">
+                                <svg class="w-5 h-5 drop-shadow-sm" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                            </button>
                         </div>
                     </div>
                 </div>
-            "#, safe_id, pack, active_card_class, display_name, active_badge, pack, safe_id, fav_class, active_anim);
+            "##, safe_id, pack, is_fav, active_card_class, stem_color, display_name, switch_type, act_weight, pack, safe_id, fav_class, pack);
             
             packs_html.push_str(&card);
         }
@@ -691,6 +776,41 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
                                 }
                             }
                         }
+                        "asmr_update" => {
+                            if let Some(val) = msg.value.as_ref() {
+                                let mode_str = val.get("type").and_then(|v| v.as_str()).unwrap_or("none");
+                                crate::dsp::ASMR_MODE.store(match mode_str {
+                                    "rain" => 1,
+                                    "thunder" => 2,
+                                    _ => 0,
+                                }, std::sync::atomic::Ordering::Relaxed);
+                                
+                                if let Some(v) = val.get("master_vol").and_then(|v| v.as_u64()) {
+                                    crate::dsp::ASMR_MASTER_VOL.store(v as u32, std::sync::atomic::Ordering::Relaxed);
+                                }
+                                if let Some(v) = val.get("rain_density").and_then(|v| v.as_u64()) {
+                                    crate::dsp::ASMR_RAIN_DENS.store(v as u32, std::sync::atomic::Ordering::Relaxed);
+                                }
+                                if let Some(v) = val.get("wind_density").and_then(|v| v.as_u64()) {
+                                    crate::dsp::ASMR_WIND_DENS.store(v as u32, std::sync::atomic::Ordering::Relaxed);
+                                }
+                                if let Some(v) = val.get("rain_vol").and_then(|v| v.as_u64()) {
+                                    crate::dsp::ASMR_RAIN_VOL.store(v as u32, std::sync::atomic::Ordering::Relaxed);
+                                }
+                                if let Some(v) = val.get("wind_vol").and_then(|v| v.as_u64()) {
+                                    crate::dsp::ASMR_WIND_VOL.store(v as u32, std::sync::atomic::Ordering::Relaxed);
+                                }
+                                if let Some(v) = val.get("thunder_delay").and_then(|v| v.as_u64()) {
+                                    crate::dsp::ASMR_THUNDER_DELAY.store(v as u32, std::sync::atomic::Ordering::Relaxed);
+                                }
+                                if let Some(v) = val.get("thunder_intensity").and_then(|v| v.as_u64()) {
+                                    crate::dsp::ASMR_THUNDER_INT.store(v as u32, std::sync::atomic::Ordering::Relaxed);
+                                }
+                                if let Some(v) = val.get("thunder_vol").and_then(|v| v.as_u64()) {
+                                    crate::dsp::ASMR_THUNDER_VOL.store(v as u32, std::sync::atomic::Ordering::Relaxed);
+                                }
+                            }
+                        }
                         "save_maker" => {
                             if let Some(val) = msg.value.as_ref() {
                                 if let (Some(name), Some(base), Some(pitch), Some(vol)) = (
@@ -755,7 +875,7 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
             .build()
             .unwrap();
 
-        (window, webview)
+        (webview, window)
     }
 
     let mut ui = Some(build_ui(

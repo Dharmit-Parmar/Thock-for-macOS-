@@ -154,7 +154,7 @@ pub struct ProceduralSwitch {
     output_lpf: Biquad,
     dc_hpf: Biquad,
     foam_sat: f32,
-    is_keyup: bool,
+
 }
 
 impl ProceduralSwitch {
@@ -323,7 +323,7 @@ impl ProceduralSwitch {
             click_vol,
             output_lpf, dc_hpf,
             foam_sat,
-            is_keyup,
+
         }
     }
 }
@@ -351,9 +351,9 @@ impl Iterator for ProceduralSwitch {
 
         // ── SECONDARY: Modal resonance tail (subtle tonal body) ───────────────
         // Very quiet. Just adds the "body" of the material, not musicality.
-        let modal = self.modes[0].sample(t)
+        let modal = (self.modes[0].sample(t)
                   + self.modes[1].sample(t)
-                  + self.modes[2].sample(t);
+                  + self.modes[2].sample(t)) * self.modal_vol;
 
         // ── TERTIARY: Friction texture (stem travel, very subtle) ─────────────
         let friction = self.friction_bpf.process(noise) * self.friction_env * self.friction_vol;
@@ -393,4 +393,109 @@ impl Source for ProceduralSwitch {
     fn total_duration(&self) -> Option<Duration> {
         Some(Duration::from_millis((self.total * 1000 / self.sr as u64) as u64))
     }
+}
+
+
+// ─── ASMR Engine ──────────────────────────────────────────────────────────────
+use std::sync::atomic::{AtomicU32, Ordering};
+
+pub static ASMR_MODE: AtomicU32 = AtomicU32::new(0); // 0=none, 1=rain, 2=thunder
+pub static ASMR_MASTER_VOL: AtomicU32 = AtomicU32::new(50);
+pub static ASMR_RAIN_DENS: AtomicU32 = AtomicU32::new(50);
+pub static ASMR_WIND_DENS: AtomicU32 = AtomicU32::new(30);
+pub static ASMR_RAIN_VOL: AtomicU32 = AtomicU32::new(70);
+pub static ASMR_WIND_VOL: AtomicU32 = AtomicU32::new(40);
+pub static ASMR_THUNDER_DELAY: AtomicU32 = AtomicU32::new(50);
+pub static ASMR_THUNDER_INT: AtomicU32 = AtomicU32::new(70);
+pub static ASMR_THUNDER_VOL: AtomicU32 = AtomicU32::new(80);
+
+pub struct AsmrSource {
+    sr: u32,
+    prng: PRNG,
+    wind_lpf: Biquad,
+    rain_bpf: Biquad,
+    rain_hpf: Biquad,
+    thunder_lpf: Biquad,
+    thunder_env: f32,
+    thunder_timer: u32,
+}
+
+impl AsmrSource {
+    pub fn new(sr: u32) -> Self {
+        Self {
+            sr,
+            prng: PRNG::new(42),
+            wind_lpf: Biquad::lowpass(sr as f32, 400.0, 0.4),
+            rain_bpf: Biquad::bandpass(sr as f32, 1500.0, 0.5),
+            rain_hpf: Biquad::highpass(sr as f32, 800.0, 0.7),
+            thunder_lpf: Biquad::lowpass(sr as f32, 120.0, 0.8),
+            thunder_env: 0.0,
+            thunder_timer: sr * 2, // Initial delay
+        }
+    }
+}
+
+impl Iterator for AsmrSource {
+    type Item = f32;
+    #[inline]
+    fn next(&mut self) -> Option<f32> {
+        let mode = ASMR_MODE.load(Ordering::Relaxed);
+        if mode == 0 {
+            return Some(0.0);
+        }
+
+        let m_vol = ASMR_MASTER_VOL.load(Ordering::Relaxed) as f32 / 100.0;
+        let mut out = 0.0;
+        let noise = self.prng.next_f32();
+
+        // Wind
+        let wind_dens = ASMR_WIND_DENS.load(Ordering::Relaxed) as f32 / 100.0;
+        let wind_v = ASMR_WIND_VOL.load(Ordering::Relaxed) as f32 / 100.0;
+        let wind_mod = 0.6 + (noise * 0.4 * wind_dens);
+        let wind = self.wind_lpf.process(noise) * wind_v * wind_mod * 0.5;
+        
+        // Rain
+        let rain_dens = ASMR_RAIN_DENS.load(Ordering::Relaxed) as f32 / 100.0;
+        let rain_v = ASMR_RAIN_VOL.load(Ordering::Relaxed) as f32 / 100.0;
+        let rain_noise = self.rain_bpf.process(noise);
+        // Sparse drops
+        let drop = if self.prng.next_f32().abs() < (0.005 * rain_dens) { noise * 4.0 } else { 0.0 };
+        let rain = self.rain_hpf.process(rain_noise + drop) * rain_v * 0.15;
+
+        out += wind + rain;
+
+        // Thunder
+        if mode == 2 {
+            let t_delay = ASMR_THUNDER_DELAY.load(Ordering::Relaxed); // 0-100 (100 = very frequent)
+            let t_int = ASMR_THUNDER_INT.load(Ordering::Relaxed) as f32 / 100.0;
+            let t_vol = ASMR_THUNDER_VOL.load(Ordering::Relaxed) as f32 / 100.0;
+
+            if self.thunder_timer > 0 {
+                self.thunder_timer -= 1;
+            } else {
+                self.thunder_env = 1.0;
+                // Calculate next thunder delay (e.g., 2 to 30 seconds depending on t_delay)
+                let delay_secs = 2.0 + (self.prng.next_f32().abs() * (40.0 - (t_delay as f32 * 0.35)));
+                self.thunder_timer = (delay_secs * self.sr as f32) as u32;
+            }
+
+            if self.thunder_env > 0.0001 {
+                let thunder_noise = self.thunder_lpf.process(noise);
+                out += thunder_noise * self.thunder_env * t_int * t_vol * 4.0;
+                self.thunder_env *= 0.99996; // ~1-2s decay
+            }
+        }
+
+        // Soft clip
+        out = soft_clip(out * m_vol * 1.5) / 1.5;
+
+        Some(out)
+    }
+}
+
+impl Source for AsmrSource {
+    fn current_frame_len(&self) -> Option<usize> { None }
+    fn channels(&self) -> u16 { 1 }
+    fn sample_rate(&self) -> u32 { self.sr }
+    fn total_duration(&self) -> Option<Duration> { None }
 }
