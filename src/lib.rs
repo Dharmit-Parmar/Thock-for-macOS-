@@ -318,9 +318,15 @@ pub fn run(is_cli: bool) {
             Sink::new_idle().0
         });
         rain_sink.set_volume(0.0);
-        {
-            let src = Decoder::new(std::io::Cursor::new(RAIN_OGG)).unwrap().repeat_infinite().convert_samples::<f32>();
-            rain_sink.append(src);
+        match Decoder::new(std::io::Cursor::new(RAIN_OGG)) {
+            Ok(decoder) => {
+                let src = decoder.repeat_infinite().convert_samples::<f32>();
+                rain_sink.append(src);
+            },
+            Err(e) => {
+                eprintln!("ASMR Rain: failed to decode audio asset: {}", e);
+                crate::dsp::ASMR_RAIN_ON.store(0, std::sync::atomic::Ordering::Relaxed);
+            }
         }
         rain_sink.play();
 
@@ -330,9 +336,15 @@ pub fn run(is_cli: bool) {
             Sink::new_idle().0
         });
         wind_sink.set_volume(0.0);
-        {
-            let src = Decoder::new(std::io::Cursor::new(WIND_OGG)).unwrap().repeat_infinite().convert_samples::<f32>();
-            wind_sink.append(src);
+        match Decoder::new(std::io::Cursor::new(WIND_OGG)) {
+            Ok(decoder) => {
+                let src = decoder.repeat_infinite().convert_samples::<f32>();
+                wind_sink.append(src);
+            },
+            Err(e) => {
+                eprintln!("ASMR Wind: failed to decode audio asset: {}", e);
+                crate::dsp::ASMR_WIND_ON.store(0, std::sync::atomic::Ordering::Relaxed);
+            }
         }
         wind_sink.play();
 
@@ -385,14 +397,20 @@ pub fn run(is_cli: bool) {
                     let chance = (rng_seed as f32 / u32::MAX as f32).abs();
                     let threshold = 0.003 + (t_freq as f32 / 100.0) * 0.03; // 0.3%-3.3% per tick
                     if chance < threshold {
-                        let src = Decoder::new(std::io::Cursor::new(THUNDER_OGG))
-                            .unwrap()
-                            .convert_samples::<f32>();
-                        thunder_sink.append(src);
-                        thunder_sink.set_volume(t_vol * m);
-                        // Minimum cooldown between strikes (20 ticks = 1 second baseline)
-                        let min_cd = 40u32 + ((100 - t_freq) as u32 * 8);
-                        thunder_cooldown = min_cd;
+                        match Decoder::new(std::io::Cursor::new(THUNDER_OGG)) {
+                            Ok(decoder) => {
+                                let src = decoder.convert_samples::<f32>();
+                                thunder_sink.append(src);
+                                thunder_sink.set_volume(t_vol * m);
+                                // Minimum cooldown between strikes (20 ticks = 1 second baseline)
+                                let min_cd = 40u32 + ((100 - t_freq) as u32 * 8);
+                                thunder_cooldown = min_cd;
+                            },
+                            Err(e) => {
+                                eprintln!("ASMR Thunder: failed to decode audio asset: {}", e);
+                                ASMR_THUNDER_ON.store(0, std::sync::atomic::Ordering::Relaxed);
+                            }
+                        }
                     }
                 }
                 if !thunder_on {
