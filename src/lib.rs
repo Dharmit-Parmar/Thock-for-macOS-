@@ -359,17 +359,16 @@ pub fn run(is_cli: bool) {
                 let rain_on = ASMR_RAIN_ON.load(Ordering::Relaxed) != 0;
                 let rain_v = ASMR_RAIN_VOL.load(Ordering::Relaxed) as f32 / 100.0;
                 let rain_dens = ASMR_RAIN_DENS.load(Ordering::Relaxed) as f32 / 100.0;
-                rain_sink.set_volume(if rain_on { rain_v * m } else { 0.0 });
-                // Density -> playback speed: 0.5x (sparse/slow) to 2.0x (torrential)
-                rain_sink.set_speed(0.5 + rain_dens * 1.5);
+                // Density acts as an intensity volume scaler (0.3x to 1.0x) to avoid pitch-shifting
+                let rain_intensity = 0.3 + (rain_dens * 0.7);
+                rain_sink.set_volume(if rain_on { rain_v * rain_intensity * m } else { 0.0 });
 
                 // Wind
                 let wind_on = ASMR_WIND_ON.load(Ordering::Relaxed) != 0;
                 let wind_v = ASMR_WIND_VOL.load(Ordering::Relaxed) as f32 / 100.0;
                 let wind_gust = ASMR_WIND_GUST.load(Ordering::Relaxed) as f32 / 100.0;
-                wind_sink.set_volume(if wind_on { wind_v * m } else { 0.0 });
-                // Gust -> playback speed: 0.6x (gentle breeze) to 1.8x (strong gust)
-                wind_sink.set_speed(0.6 + wind_gust * 1.2);
+                let wind_intensity = 0.3 + (wind_gust * 0.7);
+                wind_sink.set_volume(if wind_on { wind_v * wind_intensity * m } else { 0.0 });
 
                 // Thunder — retrigger one-shot randomly
                 let thunder_on = ASMR_THUNDER_ON.load(Ordering::Relaxed) != 0;
