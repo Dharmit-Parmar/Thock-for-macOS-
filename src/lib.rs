@@ -62,7 +62,6 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
     fs,
-    io::BufReader,
     path::Path,
     sync::{
         atomic::{AtomicU32, AtomicU64, Ordering},
