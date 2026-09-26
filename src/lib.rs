@@ -58,6 +58,43 @@ impl Completer for ThockHelper {
 use core_graphics::event::{CGEventTap, CGEventTapLocation, CGEventTapPlacement, CGEventTapOptions, CGEventType, EventField};
 use core_foundation::runloop::CFRunLoop;
 use rodio::{Decoder, OutputStream, Sink, Source};
+
+pub struct LoopingDecoder {
+    bytes: &'static [u8],
+    decoder: Decoder<std::io::Cursor<&'static [u8]>>,
+}
+
+impl LoopingDecoder {
+    pub fn new(bytes: &'static [u8]) -> Result<Self, rodio::decoder::DecoderError> {
+        let decoder = Decoder::new(std::io::Cursor::new(bytes))?;
+        Ok(Self { bytes, decoder })
+    }
+}
+
+impl Iterator for LoopingDecoder {
+    type Item = i16;
+    #[inline]
+    fn next(&mut self) -> Option<i16> {
+        if let Some(sample) = self.decoder.next() {
+            Some(sample)
+        } else {
+            if let Ok(new_decoder) = Decoder::new(std::io::Cursor::new(self.bytes)) {
+                self.decoder = new_decoder;
+                self.decoder.next()
+            } else {
+                None
+            }
+        }
+    }
+}
+
+impl Source for LoopingDecoder {
+    fn current_frame_len(&self) -> Option<usize> { self.decoder.current_frame_len() }
+    fn channels(&self) -> u16 { self.decoder.channels() }
+    fn sample_rate(&self) -> u32 { self.decoder.sample_rate() }
+    fn total_duration(&self) -> Option<std::time::Duration> { None } // Infinite
+}
+
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
@@ -317,9 +354,9 @@ pub fn run(is_cli: bool) {
             Sink::new_idle().0
         });
         rain_sink.set_volume(0.0);
-        match Decoder::new(std::io::Cursor::new(RAIN_OGG)) {
+        match LoopingDecoder::new(RAIN_OGG) {
             Ok(decoder) => {
-                let src = decoder.repeat_infinite().convert_samples::<f32>();
+                let src = decoder.convert_samples::<f32>();
                 rain_sink.append(src);
             },
             Err(e) => {
@@ -335,9 +372,9 @@ pub fn run(is_cli: bool) {
             Sink::new_idle().0
         });
         wind_sink.set_volume(0.0);
-        match Decoder::new(std::io::Cursor::new(WIND_OGG)) {
+        match LoopingDecoder::new(WIND_OGG) {
             Ok(decoder) => {
-                let src = decoder.repeat_infinite().convert_samples::<f32>();
+                let src = decoder.convert_samples::<f32>();
                 wind_sink.append(src);
             },
             Err(e) => {
