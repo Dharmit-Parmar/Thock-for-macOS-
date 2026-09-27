@@ -1,12 +1,12 @@
 <div align="center">
 
-<img src="src/pink_logo.jpg" alt="Thock Logo" width="120" style="border-radius: 20px;" />
+<img src="src/pink_logo.jpg" alt="Thock Logo" width="110" style="border-radius: 20px;" />
 
-# Thock for macOS
+# ⌨ Thock for macOS
 
 **Bring the satisfying sound of premium mechanical keyboards to every keystroke on your Mac.**
 
-Built entirely in Rust. Zero latency. Real-time DSP engine. Lightweight by design.
+Built entirely in Rust. Zero latency. Real-time DSP engine. Under 15 MB RAM in CLI mode.
 
 [![Rust](https://img.shields.io/badge/Built%20with-Rust-orange?style=flat-square&logo=rust)](https://www.rust-lang.org/)
 [![Platform](https://img.shields.io/badge/Platform-macOS-black?style=flat-square&logo=apple)](https://www.apple.com/macos/)
@@ -18,168 +18,178 @@ Built entirely in Rust. Zero latency. Real-time DSP engine. Lightweight by desig
 
 ## What is Thock?
 
-Thock is a macOS app that intercepts your keystrokes using the native CoreGraphics event tap and plays back beautiful mechanical keyboard sounds in real time — no lag, no CPU waste, no bloat.
+Thock intercepts your keystrokes using macOS CoreGraphics and plays back real mechanical keyboard sounds in real time — no lag, no CPU waste, no bloat.
 
 It ships two modes:
-- **`thock-app`** (GUI) — A premium Glassmorphism GUI. Because it uses WebKit for rendering, it is relatively heavy (uses about **~150 MB** of RAM while open).
-- **`thock-cli`** (Headless) — An ultra-minimal terminal daemon with tab-autocomplete. Extremely lightweight (uses about **~10 MB** of RAM).
+
+| Mode | RAM | Best for |
+|------|-----|----------|
+| **CLI** (`thock-cli`) | ~10 MB | Always-on, runs in background, battery friendly |
+| **GUI** (`thock-app`) | ~150 MB | Full visual interface with pack browser & ASMR mixer |
 
 ---
 
-## Installation
+## ⚡ Recommended — One-Command Setup (CLI + GUI + Auto-Compile)
 
-### Direct Download (Easiest)
-[![Download Thock.zip](https://img.shields.io/badge/Download-Thock.app.zip-brightgreen?style=for-the-badge&logo=apple&logoColor=white)](https://raw.githubusercontent.com/Dharmit-Parmar/Thock-for-macOS-/main/Thock.zip)
+This is the same setup the developer uses. Typing `thock` anywhere in your terminal opens an interactive launcher that **always compiles and runs the latest code**.
 
-Download the `.zip`, extract it, and drag `Thock.app` to your Applications folder.
+### Step 1 — Install Rust
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+### Step 2 — Clone the repo
+
+```bash
+git clone https://github.com/Dharmit-Parmar/Thock-for-macOS-.git ~/Thock
+```
+
+> You can clone it anywhere. Just replace `~/Thock` with your preferred path in Step 3.
+
+### Step 3 — Install the global `thock` command
+
+```bash
+cat > ~/.cargo/bin/thock << 'EOF'
+#!/bin/bash
+cd "$HOME/Thock" || { echo "Error: Thock folder not found at ~/Thock."; exit 1; }
+
+echo ""
+echo "⌨️  Welcome to Thock"
+echo "=================="
+echo "1) CLI Mode (lightweight, ~10 MB RAM)"
+echo "2) GUI App  (full interface, ~150 MB RAM)"
+echo ""
+read -p "Enter choice [1 or 2]: " choice
+
+case $choice in
+    1) echo "Launching CLI..."; cargo run --release --bin thock-cli -- "$@" ;;
+    2) echo "Launching GUI..."; cargo run --release --bin thock-app -- "$@" ;;
+    *) echo "Invalid choice."; exit 1 ;;
+esac
+EOF
+chmod +x ~/.cargo/bin/thock
+```
+
+> **If you cloned to a different location**, change `$HOME/Thock` in the script to match your path.
+
+### Step 4 — Grant Accessibility Permission
+
+macOS requires one-time permission for Thock to read keystrokes.
+
+1. Run `thock` once — it will automatically open **System Settings → Privacy & Security → Accessibility / Input Monitoring**
+2. Add **Thock** (or your **Terminal app**) to the list and toggle it **on**
+3. Run `thock` again — done ✓
+
+### Step 5 — Launch
+
+```bash
+thock
+```
+
+Every time you run `thock`, Cargo checks if the code changed. If you pull a new update, it recompiles automatically before launching. No manual build step ever needed.
+
+```
+⌨️  Welcome to Thock
+==================
+1) CLI Mode (lightweight, ~10 MB RAM)
+2) GUI App  (full interface, ~150 MB RAM)
+
+Enter choice [1 or 2]:
+```
 
 ---
 
-### Clone & Build
+## 🖥 GUI App — Drag & Drop Install (No Rust Required)
 
-```bash
-git clone https://github.com/Dharmit-Parmar/Thock-for-macOS-.git
-cd Thock-for-macOS-
-```
+If you just want the GUI app without setting up a development environment, download the pre-built binary.
 
-### Run the GUI App
-```bash
-cargo run --release --bin thock-app
-```
+### [⬇ Download Thock.zip](https://github.com/Dharmit-Parmar/Thock-for-macOS-/raw/main/Thock.zip)
 
-### Run the Lightweight CLI (Recommended for low RAM usage)
-```bash
-cargo run --release --bin thock-cli
-```
+1. Unzip `Thock.zip`
+2. Drag **Thock.app** into your `/Applications` folder
+3. Right-click → **Open** on first launch (to bypass Gatekeeper)
+4. Grant Accessibility permission when prompted
 
-### Build a native `.app` bundle and install to Applications
-```bash
-./build_mac_app.sh
-mv Thock.app /Applications/
-open /Applications/Thock.app
-```
-
-### Make `thock` a global terminal command
-```bash
-cargo install --path . --bin thock-cli
-ln -sf ~/.cargo/bin/thock-cli ~/.cargo/bin/thock
-```
-After this, just type `thock` from anywhere in your terminal.
-
----
-
-## First-Time Setup — macOS Permissions (Required)
-
-To play sounds instantly when you type, Thock requires permission to monitor your keystrokes globally. This requires a one-time setup in macOS System Settings. 
-
-1. Open **System Settings** → **Privacy & Security**
-2. Scroll down to **Accessibility** (and/or **Input Monitoring**)
-3. Click the `+` button, authenticate, and select **Thock.app** from your Applications folder (or toggle your Terminal app if running via Cargo)
-4. Toggle the switch **ON** for Thock
-5. **Restart Thock** for the permissions to take effect
-
-> **🛡️ Privacy & Data Guarantee:** Thock operates 100% locally on your machine. It does **not** log, store, or transmit your keystrokes. The input monitoring and device access is used *strictly* to trigger the audio engine on keypress. There is no telemetry, no data collection, and no internet connection required.
-
----
-
-## Features
-
-### 🔊 Zero-Latency Audio Engine
-Powered by macOS CoreGraphics native event taps and the `rodio` Rust audio engine. Key events are dispatched directly on the main thread with no intermediate queuing. Typical keystroke-to-audio latency is under 3ms.
-
-### 🎛️ Real-Time Procedural DSP Engine
-Don't want WAV files? Thock includes a physics-accurate mathematical sound synthesizer. Every parameter of a real mechanical switch is modelled:
-
-| Parameter | Range | Effect |
-|-----------|-------|--------|
-| `switch` | cream / red / black / brown / blue | Switch type character |
-| `weight` | 35–90g | Spring stiffness → impact velocity |
-| `lube` | 0.0–1.0 | Friction noise floor + high-freq rolloff |
-| `foam` | 0.0–1.0 | Dampening + soft saturation |
-| `plate` | brass / aluminum / pom / polycarbonate | Fundamental resonant frequency |
-| `case` | plastic / aluminum / polycarbonate | Ring time multiplier |
-| `mount` | tray / gasket / top | Sub-bass isolation cutoff |
-| `keycap` | pbt / abs | High-frequency damping |
-| `orings` | 0.0–1.0 | Attack softening |
-| `pitch` | 0.5–2.0 | Global pitch scaling |
-
-Change any parameter live in the CLI:
-```
-> proc lube 0.9
-> proc plate pom
-> proc switch cream
-```
-
-### 📦 16 Built-in Sound Packs
-
-| Pack | Character |
-|------|-----------|
-| `nk_cream` | Smooth, creamy POM thock |
-| `nk_cream_procedural` | Live DSP version of NK Cream |
-| `nk_cream_loud` | Louder, more aggressive cream |
-| `cherry_mx_black_pbt` | Linear, deep, clacky |
-| `cherry_mx_brown_pbt` | Tactile, quiet brown |
-| `cherry_mx_brown_abs` | Softer brown on ABS |
-| `cherry_mx_red_abs` | Light, smooth linear |
-| `creamy_marbly` | Rich marbled cream tone |
-| `creamy_heavy` | Heavy, satisfying thock |
-| `creamy_thock_v2` | V2 tuned cream profile |
-| `glassy_custom` | Glassy high-pitched clack |
-| `eg_crystal_purple` | Crystal linear — bright & precise |
-| `overlubed_custom` | Over-lubed smooth whisper |
-| `pe_foam_creamy` | PE foam modded — muted thock |
-| `animal_crossing_nl` | Soft, gentle Nintendo-style |
-| `steelseries_apex_pro_v2` | OmniPoint magnetic linear |
-
-### 🪟 Smart Window Lifecycle & Memory Management
-If you are using the GUI (`thock-app`), you can drastically cut its RAM usage when you aren't actively changing settings. 
-Simply press **`Cmd + W`** or click the red close button. 
-
-Unlike most apps that just "hide" the window, Thock actually **de-initializes and drops the window and `WKWebView` objects completely**, releasing their memory back to the OS.
-- **RAM usage drops** from **~150 MB** down to just **~15 MB**.
-- The background audio engine (`CGEventTap` + `rodio` thread) continues running completely independently.
-- Clicking the Dock icon re-creates the WebView fresh on demand, instantly restoring your volume and pack state from `.settings.json`.
-
-### ⭐ Favorites & Persistence
-Star any pack in the GUI to pin it to the top. Your active pack and volume are automatically saved and restored between launches.
-
-### 💻 CLI Tab-Autocomplete
-The `thock-cli` uses `rustyline` for a full readline experience — Tab-completion for commands and pack names, command history with arrow keys, and clean `>` prompt.
-
-```
-> pack <Tab>          # lists all packs
-> pack nk<Tab>        # completes to nk_cream
-> proc <Tab>          # shows all procedural parameters
-```
+> **Note:** The pre-built ZIP is a snapshot. It will not update automatically when new features are added. The recommended terminal setup above always runs the latest version.
 
 ---
 
 ## CLI Commands
 
+Once running in CLI mode, type `help` to see all commands:
+
 ```
-vol <0-100>           Set master volume
-pack <name>           Switch to a sound pack (with tab-complete)
-packs                 List all available packs
-proc                  Show current procedural engine settings
-proc <param> <value>  Adjust a procedural parameter live
-help                  Show all commands
-exit                  Quit
+❯ help
+
+  ┌─ Commands ────────────────────────────────────────────┐
+  │  vol <0-100>   Set master volume
+  │  pack <name>   Switch to a sound pack
+  │  packs         List all available packs
+  │  proc          View/Edit procedural synthesis settings
+  │  asmr          ASMR background audio (rain/wind/thunder)
+  │  quit / exit   Close Thock
+  └───────────────────────────────────────────────────────┘
 ```
+
+### Quick examples
+
+```bash
+# Switch pack
+❯ pack cherry_mx_brown_pbt
+
+# Set volume to 70%
+❯ vol 70
+
+# Turn on rain ambience
+❯ asmr rain
+
+# View all packs
+❯ packs
+
+# Tune the procedural engine
+❯ proc lube 0.8
+❯ proc switch cream
+```
+
+Tab autocomplete works on all commands and pack names.
 
 ---
 
-## Adding Custom Sound Packs
+## Sound Packs
 
-1. Create a folder in `packs/your_pack_name/`
-2. Add your `.wav` files inside it
-3. Create a `config.json`:
+16 built-in packs included:
+
+| Pack | Type | Character |
+|------|------|-----------|
+| `creamy_marbly` | Linear | Deep, marbly thock |
+| `creamy_thock_v2` | Linear | Full-bodied, smooth |
+| `overlubed_custom` | Linear | Silent, buttery |
+| `nk_cream` | Linear | Iconic NK cream sound |
+| `nk_cream_loud` | Linear | NK cream, unlubed |
+| `pe_foam_creamy` | Linear | PE-foam dampened |
+| `glassy_custom` | Linear | High-pitched, glassy |
+| `creamy_heavy` | Linear | Heavy spring thock |
+| `cherry_mx_red_abs` | Linear | Cherry red on ABS |
+| `cherry_mx_black_pbt` | Linear | Cherry black on PBT |
+| `cherry_mx_brown_abs` | Tactile | Cherry brown on ABS |
+| `cherry_mx_brown_pbt` | Tactile | Cherry brown on PBT |
+| `eg_crystal_purple` | Tactile | EG Crystal Purple |
+| `animal_crossing_nl` | Special | Nintendo-style chimes |
+| `steelseries_apex_pro_v2` | Special | OmniPoint magnetic |
+| `nk_cream_procedural` | Procedural | Real-time DSP synthesis |
+
+### Adding Custom Packs
+
+1. Create a folder inside `packs/` with your pack name (e.g. `packs/my_switches/`)
+2. Add your WAV or OGG audio files
+3. Create a `config.json` in that folder:
 
 ```json
 {
   "defaults": ["default.wav"],
   "mappings": {
-    "28": "enter.wav",
-    "51": "backspace.wav",
+    "36": "enter.wav",
     "49": "space.wav"
   },
   "pitch": 1.0,
@@ -187,43 +197,84 @@ exit                  Quit
 }
 ```
 
-Key codes follow the Mechvibes standard. Thock auto-discovers new packs on next launch.
+4. Switch to it: `pack my_switches`
+
+---
+
+## ASMR Background Audio
+
+Thock ships a full ASMR engine with three independent layers:
+
+```bash
+❯ asmr rain          # Enable rain layer
+❯ asmr wind          # Enable wind layer  
+❯ asmr thunder       # Enable thunder layer
+❯ asmr none          # Disable all layers
+
+❯ asmr rain_vol 80   # Rain volume 80%
+❯ asmr rain_dens 60  # Rain density/intensity
+❯ asmr wind_gust 40  # Wind gustiness
+❯ asmr thunder_freq 50  # Thunder frequency
+❯ asmr vol 70        # Master ASMR volume
+```
+
+---
+
+## Procedural Synthesis Engine
+
+No audio files needed. Thock can synthesize keyboard sounds from math in real-time using its built-in DSP engine:
+
+```bash
+❯ proc                     # View current settings
+❯ proc switch cream        # Switch type: cream | red | black | brown | blue
+❯ proc lube 0.8            # Lube amount (0.0 = scratchy, 1.0 = silent)
+❯ proc weight 55           # Spring weight in grams (40–90)
+❯ proc foam 0.3            # Foam dampening (0.0–1.0)
+❯ proc plate brass         # Plate material: brass | pom | fr4 | pc | aluminum
+❯ proc case aluminum       # Case material: aluminum | plastic
+❯ proc mount gasket        # Mounting: tray | gasket
+❯ proc pitch 1.1           # Overall pitch shift
+```
 
 ---
 
 ## Architecture
 
 ```
-thock
-├── src/
-│   ├── lib.rs       Core engine — CGEventTap, audio dispatch, CLI REPL, IPC handler
-│   ├── dsp.rs       Procedural DSP engine — modal synthesis, biquad filters, PRNG
-│   ├── keymap.rs    Static CGKeyCode → Mechvibes code map (OnceLock, zero per-keystroke alloc)
-│   └── bin/
-│       ├── thock-app.rs    GUI entry point (tao + wry WebView)
-│       └── thock-cli.rs    CLI entry point (headless)
-├── packs/           Sound pack directories
-└── ui.html          Glassmorphism frontend (TailwindCSS + vanilla JS IPC)
+CGEventTap (main thread, macOS)
+    │
+    ├── KeyDown → pick sound from LoadedPack (Arc<Vec<u8>> bytes)
+    │              └── rodio: Decoder<Cursor<bytes>> → stream to audio device
+    │
+    └── ASMR polling thread (50ms ticks)
+           ├── rain_sink  ─ LoopingDecoder (zero-copy, no Buffered)
+           ├── wind_sink  ─ LoopingDecoder
+           └── thunder_sink ─ one-shot on random trigger
 ```
 
-### Performance Optimizations
-- **Lock-free hot path**: `AtomicU64` for velocity tracking — no mutex in the CGEventTap callback
-- **Zero per-keystroke allocation**: Keymap is a static `OnceLock<HashMap>` built once at first keypress
-- **~30× lower RAM**: WAV packs stored as raw bytes, decoded lazily on playback (~300KB vs ~9MB)
-- **DSP time accumulation**: `t += dt` instead of per-sample integer division (eliminates 2,600+ divisions per keypress)
-- **`Cell<usize>`** for round-robin pack index — zero-overhead interior mutability inside `Fn` closure
+- Keystroke sounds: raw compressed bytes stored per pack. Decoded per-play by rodio. Pack RAM: ~1–3 MB.
+- ASMR loops: custom `LoopingDecoder` restarts the OGG decoder on loop end with no heap caching.
+- GUI: `wry` + `tao` WebView over a Tailwind CSS + Glassmorphism `ui.html`.
+- CLI: `rustyline` REPL with tab-autocomplete, history, colored output.
 
 ---
 
 ## Requirements
 
-- macOS 12 Monterey or later (Apple Silicon & Intel)
-- Rust stable toolchain (`rustup` recommended)
+- macOS 12 Ventura or later
+- Apple Silicon or Intel Mac
+- Rust 1.75+ (for the source build)
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE)
 
 ---
 
 <div align="center">
 
-Made with ❤️ and a lot of clacking
+Made with ❤️ and way too many keyboard switches.
 
 </div>

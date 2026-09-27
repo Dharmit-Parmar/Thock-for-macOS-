@@ -1,8 +1,5 @@
 /target/
 *.bak
-*.zip
-Thock.app/
 .DS_Store
 
-Thock.zip
 graphify-out/
