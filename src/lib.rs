@@ -336,13 +336,58 @@ pub fn run(is_cli: bool) {
     }
 
     if is_cli {
-        println!("{} {}", "🎧".magenta(), "Thock is running in Lightweight CLI mode...".bold().cyan());
+        let pack_display = current_pack_name.read().unwrap().replace('_', " ");
+        println!();
+        println!("{}", "╔══════════════════════════════════════════╗".truecolor(120, 80, 255));
+        println!("{} {}  {} {}",
+            "║".truecolor(120, 80, 255),
+            "⌨".truecolor(255, 180, 80),
+            "T H O C K".bold().truecolor(255, 255, 255),
+            "                        ║".truecolor(120, 80, 255)
+        );
+        println!("{} {}  {}{}",
+            "║".truecolor(120, 80, 255),
+            "  ".truecolor(180, 180, 180),
+            "Mechanical Keyboard Sound Engine".truecolor(180, 160, 255),
+            "  ║".truecolor(120, 80, 255)
+        );
+        println!("{}", "╚══════════════════════════════════════════╝".truecolor(120, 80, 255));
+        println!();
+
         if !ax_trusted {
-            println!("{} {}", "⚠️  WARNING:".bold().red(), "Input Monitoring / Accessibility permissions not granted. Keypresses will not be detected!".yellow());
-            println!("   {}", "System Settings has been opened. Please grant permission and restart.".bold().yellow());
+            println!("{}", "  ┌──────────────────────────────────────────┐".truecolor(255, 80, 80));
+            println!("  {} {} {}",
+                "│".truecolor(255, 80, 80),
+                "⚠  ACCESSIBILITY PERMISSION MISSING".bold().truecolor(255, 80, 80),
+                "│".truecolor(255, 80, 80)
+            );
+            println!("  {} {} {}",
+                "│".truecolor(255, 80, 80),
+                "  Keypresses cannot be detected.     ".truecolor(255, 180, 80),
+                "│".truecolor(255, 80, 80)
+            );
+            println!("  {} {} {}",
+                "│".truecolor(255, 80, 80),
+                "  Settings opened — grant & restart. ".truecolor(255, 220, 100),
+                "│".truecolor(255, 80, 80)
+            );
+            println!("{}", "  └──────────────────────────────────────────┘".truecolor(255, 80, 80));
+            println!();
         }
-        println!("{} {}", "Current Pack:".green(), current_pack_name.read().unwrap().bold().white());
-        println!("{} {}", "Status:".green(), "Running... Press Ctrl+C to quit.".dimmed());
+
+        println!("  {}  {}",
+            "◈  Pack:".truecolor(180, 160, 255),
+            pack_display.bold().truecolor(255, 255, 255)
+        );
+        println!("  {}  {}",
+            "◈  Mode:".truecolor(180, 160, 255),
+            "Running — Ctrl+C to quit".truecolor(120, 220, 120)
+        );
+        println!("  {}  {}",
+            "◈  Hint:".truecolor(180, 160, 255),
+            "type 'help' for commands, Tab to autocomplete".truecolor(140, 140, 140)
+        );
+        println!();
     }
 
     // Audio + CGEventTap
@@ -572,8 +617,6 @@ pub fn run(is_cli: bool) {
 
     if is_cli {
         // Print banner only once here (removed duplicate inside the spawned thread below)
-        println!("\n{} {}", "🎧".magenta(), "Thock Headless CLI Mode Active".bold().cyan());
-        println!("Type {} to see available commands.\n", "'help'".green());
         
         // Run CLI REPL in a background thread so the Main Thread is dedicated
         // purely to the macOS CGEventTap. MacOS heavily throttles background
@@ -589,7 +632,7 @@ pub fn run(is_cli: bool) {
             rl.set_helper(Some(helper));
             
             loop {
-                let readline = rl.readline("> ");
+                let readline = rl.readline(&format!("{} ", "❯".truecolor(120, 80, 255)));
                 let input = match readline {
                     Ok(line) => {
                         let _ = rl.add_history_entry(line.as_str());
@@ -602,23 +645,26 @@ pub fn run(is_cli: bool) {
             
             match parts[0] {
                 "help" => {
-                    println!("Available Commands:");
-                    println!("  vol <0-100>    - Set master volume (e.g. vol 80)");
-                    println!("  pack <name>    - Change the active sound pack (e.g. pack creamy)");
-                    println!("  packs          - List all available sound packs");
-                    println!("  proc           - View/Edit mathematical procedural settings");
-                    println!("  asmr           - View/Edit ASMR background audio settings (e.g. asmr rain, asmr vol 80)");
-                    println!("  quit/exit      - Close the application");
+                    println!();
+                    println!("{}", "  ┌─ Commands ───────────────────────────────────────────┐".truecolor(120, 80, 255));
+                    println!("  {}  {:12}  {}", "│".truecolor(120, 80, 255), "vol <0-100>".truecolor(255, 200, 80), "Set master volume                            ".truecolor(200, 200, 200));
+                    println!("  {}  {:12}  {}", "│".truecolor(120, 80, 255), "pack <name>".truecolor(255, 200, 80), "Switch to a sound pack                       ".truecolor(200, 200, 200));
+                    println!("  {}  {:12}  {}", "│".truecolor(120, 80, 255), "packs".truecolor(255, 200, 80),       "List all available packs                     ".truecolor(200, 200, 200));
+                    println!("  {}  {:12}  {}", "│".truecolor(120, 80, 255), "proc".truecolor(255, 200, 80),        "View/Edit procedural synthesis settings      ".truecolor(200, 200, 200));
+                    println!("  {}  {:12}  {}", "│".truecolor(120, 80, 255), "asmr".truecolor(255, 200, 80),        "ASMR background audio (rain/wind/thunder)    ".truecolor(200, 200, 200));
+                    println!("  {}  {:12}  {}", "│".truecolor(120, 80, 255), "quit / exit".truecolor(255, 200, 80), "Close Thock                                  ".truecolor(200, 200, 200));
+                    println!("{}", "  └──────────────────────────────────────────────────────┘".truecolor(120, 80, 255));
+                    println!();
                 },
                 "vol" => {
                     if parts.len() > 1 {
                         if let Ok(v) = parts[1].parse::<u32>() {
                             let v = v.clamp(0, 100);
                             VOL.store(v, Ordering::Relaxed);
-                            println!("🔊 Volume set to {}%", v);
+                            println!("  {} {} {}", "🔊".truecolor(255,200,80), "Volume →".truecolor(180,160,255), format!("{}%", v).bold().truecolor(255,255,255));
                             save_settings(&packs_dir.join(".settings.json"), v, &*current_pack_name.read().unwrap());
                         } else {
-                            println!("Invalid volume. Use a number between 0 and 100.");
+                            println!("  {} {}", "✗".bold().truecolor(255,80,80), "Invalid value — use a number 0–100.".truecolor(255,140,80));
                         }
                     }
                 },
@@ -629,20 +675,40 @@ pub fn run(is_cli: bool) {
                         if let Some(pack) = load_pack(&p_dir) {
                             *current_pack.write().unwrap() = Some(pack);
                             *current_pack_name.write().unwrap() = pack_name.clone();
-                            println!("✅ Switched to sound pack: {}", pack_name);
+                            println!("  {} {}", "✔".bold().truecolor(80,255,140), format!("Now playing → {}", pack_name.replace('_', " ")).truecolor(255,255,255));
                             save_settings(&packs_dir.join(".settings.json"), VOL.load(Ordering::Relaxed), &pack_name);
                         } else {
-                            println!("❌ Pack not found: {}", pack_name);
+                            println!("  {} {} {}", "✗".bold().truecolor(255,80,80), "Pack not found:".truecolor(255,140,80), pack_name.truecolor(255,180,80));
                         }
                     }
                 },
                 "packs" => {
-                    println!("📦 Available Packs:");
                     let active_pack = current_pack_name.read().unwrap().clone();
+                    println!();
+                    println!("{}", "  ┌─ Sound Packs ───────────────────────────────────────┐".truecolor(120, 80, 255));
                     for p in &available_packs {
-                        let active = if active_pack == *p { " (Active)" } else { "" };
-                        println!("  - {}{}", p, active);
+                        let display = p.replace('_', " ");
+                        if active_pack == *p {
+                            println!("  {}  {} {}",
+                                "│".truecolor(120, 80, 255),
+                                "▶".bold().truecolor(255, 200, 80),
+                                display.bold().truecolor(255, 255, 255)
+                            );
+                        } else {
+                            println!("  {}  {} {}",
+                                "│".truecolor(120, 80, 255),
+                                " ".truecolor(100, 100, 100),
+                                display.truecolor(160, 160, 180)
+                            );
+                        }
                     }
+                    println!("{}", "  └──────────────────────────────────────────────────────┘".truecolor(120, 80, 255));
+                    println!("  {} {} {}",
+                        "".truecolor(140,140,140),
+                        "tip: type".truecolor(100, 100, 100),
+                        "pack <name>  to switch".truecolor(120, 80, 255)
+                    );
+                    println!();
                 },
                 "proc" => {
                     let mut lock = current_pack.write().unwrap();
@@ -662,7 +728,7 @@ pub fn run(is_cli: bool) {
                         };
                         *lock = Some(new_pack);
                         *current_pack_name.write().unwrap() = "__cli_proc__".to_string();
-                        println!("⚙️ Switched to Procedural Engine.");
+                        println!("  {} {}", "⚙".truecolor(255,200,80), "Switched to Procedural Engine".bold().truecolor(180,160,255));
                     }
                     
                     if parts.len() == 1 {
@@ -692,48 +758,53 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
                         if let Some(pack) = lock.as_mut() {
                             if let Some(proc) = pack.procedural.as_mut() {
                                 match prop {
-                                    "switch" => { proc.switch_type = val.to_string(); println!("Set switch to {}", val); },
-                                    "weight" => if let Ok(v) = val.parse::<f32>() { proc.spring_weight = v; println!("Set weight to {}", v); },
+                                    "switch" => { proc.switch_type = val.to_string(); println!("  {} {} → {}", "✔".bold().truecolor(80,255,140), "switch".truecolor(255,200,80), val.bold().truecolor(255,255,255)); },
+                                    "weight" => if let Ok(v) = val.parse::<f32>() { proc.spring_weight = v; println!("  {} {} → {}", "✔".bold().truecolor(80,255,140), "weight".truecolor(255,200,80), format!("{}", v).bold().truecolor(255,255,255)); },
                                     "lube" => if let Ok(v) = val.parse::<f32>() { proc.lube_amount = v; println!("Set lube to {}", v); },
                                     "foam" => if let Ok(v) = val.parse::<f32>() { proc.foam_mod = v; println!("Set foam to {}", v); },
                                     "orings" => if let Ok(v) = val.parse::<f32>() { proc.o_rings = v; println!("Set orings to {}", v); },
                                     "pitch" => if let Ok(v) = val.parse::<f32>() { proc.pitch = v; println!("Set pitch to {}", v); },
-                                    "keycap" => { proc.keycap_material = val.to_string(); println!("Set keycap to {}", val); },
-                                    "plate" => { proc.plate_material = val.to_string(); println!("Set plate to {}", val); },
-                                    "case" => { proc.case_material = val.to_string(); println!("Set case to {}", val); },
-                                    "mount" => { proc.mounting_style = val.to_string(); println!("Set mount to {}", val); },
+                                    "keycap" => { proc.keycap_material = val.to_string(); println!("  {} {} → {}", "✔".bold().truecolor(80,255,140), "keycap".truecolor(255,200,80), val.bold().truecolor(255,255,255)); },
+                                    "plate" => { proc.plate_material = val.to_string(); println!("  {} {} → {}", "✔".bold().truecolor(80,255,140), "plate".truecolor(255,200,80), val.bold().truecolor(255,255,255)); },
+                                    "case" => { proc.case_material = val.to_string(); println!("  {} {} → {}", "✔".bold().truecolor(80,255,140), "case".truecolor(255,200,80), val.bold().truecolor(255,255,255)); },
+                                    "mount" => { proc.mounting_style = val.to_string(); println!("  {} {} → {}", "✔".bold().truecolor(80,255,140), "mount".truecolor(255,200,80), val.bold().truecolor(255,255,255)); },
                                     _ => println!("Unknown procedural property: {}", prop),
                                 }
                             }
                         }
                     } else {
-                        println!("Usage: proc <property> <value>");
+                        println!("  {} {}", "tip:".truecolor(100,100,100), "proc <property> <value>  e.g. proc lube 0.9".truecolor(120,80,255));
                     }
                 },
                 "asmr" => {
                     if parts.len() == 1 {
-                        let mode = 0;
-                        println!("ASMR Status:");
-                        println!("  Mode: {}", match mode { 1 => "rain", 2 => "thunder", _ => "none" });
-                        println!("  Master Vol: {}%", crate::dsp::ASMR_MASTER_VOL.load(Ordering::Relaxed));
-                        if mode >= 1 {
-                            println!("  Rain Dens: {}%, Vol: {}%", crate::dsp::ASMR_RAIN_DENS.load(Ordering::Relaxed), crate::dsp::ASMR_RAIN_VOL.load(Ordering::Relaxed));
-                            println!("  Wind Gust: {}%, Vol: {}%", crate::dsp::ASMR_WIND_GUST.load(Ordering::Relaxed), crate::dsp::ASMR_WIND_VOL.load(Ordering::Relaxed));
-                        }
-                        if mode == 2 {
-                            println!("  Thunder Freq: {}%, Int: {}%, Vol: {}%", crate::dsp::ASMR_THUNDER_FREQ.load(Ordering::Relaxed), crate::dsp::ASMR_THUNDER_INT.load(Ordering::Relaxed), crate::dsp::ASMR_THUNDER_VOL.load(Ordering::Relaxed));
-                        }
-                        println!("\nUsage:");
-                        println!("  asmr none|rain|thunder");
-                        println!("  asmr <vol|rain_dens|wind_gust|rain_vol|wind_vol|thunder_freq|thunder_int|thunder_vol> <0-100>");
+                        use crate::dsp::*;
+                        let rain_on = ASMR_RAIN_ON.load(Ordering::Relaxed) != 0;
+                        let wind_on = ASMR_WIND_ON.load(Ordering::Relaxed) != 0;
+                        let thunder_on = ASMR_THUNDER_ON.load(Ordering::Relaxed) != 0;
+                        let dot = |on: bool| if on { "●".truecolor(80, 255, 140) } else { "○".truecolor(100, 100, 100) };
+                        println!();
+                        println!("{}", "  ┌─ ASMR Status ───────────────────────────────────────┐".truecolor(80, 180, 255));
+                        println!("  {}  {} Master Vol  → {}%", "│".truecolor(80,180,255), "🔊".truecolor(255,200,80), ASMR_MASTER_VOL.load(Ordering::Relaxed).to_string().bold().truecolor(255,255,255));
+                        println!("  {}  {} {} Rain       vol {}%  dens {}%", "│".truecolor(80,180,255), dot(rain_on), "🌧".truecolor(80,180,255), ASMR_RAIN_VOL.load(Ordering::Relaxed), ASMR_RAIN_DENS.load(Ordering::Relaxed));
+                        println!("  {}  {} {} Wind       vol {}%  gust {}%", "│".truecolor(80,180,255), dot(wind_on), "🌬".truecolor(140,200,255), ASMR_WIND_VOL.load(Ordering::Relaxed), ASMR_WIND_GUST.load(Ordering::Relaxed));
+                        println!("  {}  {} {} Thunder    vol {}%  freq {}%  int {}%", "│".truecolor(80,180,255), dot(thunder_on), "⛈".truecolor(255,220,80), ASMR_THUNDER_VOL.load(Ordering::Relaxed), ASMR_THUNDER_FREQ.load(Ordering::Relaxed), ASMR_THUNDER_INT.load(Ordering::Relaxed));
+                        println!("{}", "  └──────────────────────────────────────────────────────┘".truecolor(80, 180, 255));
+                        println!("  {} {}  {}  {}",
+                            "tip:".truecolor(100,100,100),
+                            "asmr rain|wind|thunder|none".truecolor(80,180,255),
+                            "or".truecolor(100,100,100),
+                            "asmr rain_vol 80".truecolor(80,180,255)
+                        );
+                        println!();
                         continue;
                     }
                     
                     let prop = parts[1];
                     match prop {
-                        "none" => { crate::dsp::ASMR_RAIN_ON.store(0, Ordering::Relaxed); crate::dsp::ASMR_WIND_ON.store(0, Ordering::Relaxed); crate::dsp::ASMR_THUNDER_ON.store(0, Ordering::Relaxed); println!("✅ ASMR disabled"); },
-                        "rain" => { crate::dsp::ASMR_RAIN_ON.store(1, Ordering::Relaxed); println!("🌧️ ASMR Rain on"); },
-                        "thunder" => { crate::dsp::ASMR_THUNDER_ON.store(1, Ordering::Relaxed); println!("⛈️ ASMR Thunder on"); },
+                        "none" => { crate::dsp::ASMR_RAIN_ON.store(0, Ordering::Relaxed); crate::dsp::ASMR_WIND_ON.store(0, Ordering::Relaxed); crate::dsp::ASMR_THUNDER_ON.store(0, Ordering::Relaxed); println!("  {} {}", "○".truecolor(100,100,100), "ASMR layers all off".truecolor(180,180,180)); },
+                        "rain" => { crate::dsp::ASMR_RAIN_ON.store(1, Ordering::Relaxed); println!("  {} {}", "🌧".truecolor(80,180,255), "Rain layer on".bold().truecolor(80,180,255)); },
+                        "thunder" => { crate::dsp::ASMR_THUNDER_ON.store(1, Ordering::Relaxed); println!("  {} {}", "⛈".truecolor(255,220,80), "Thunder layer on".bold().truecolor(255,220,80)); },
                         _ => {
                             if parts.len() >= 3 {
                                 if let Ok(v) = parts[2].parse::<u32>() {
@@ -749,21 +820,21 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
                                         "thunder_vol" => crate::dsp::ASMR_THUNDER_VOL.store(v, Ordering::Relaxed),
                                         _ => { println!("Unknown ASMR property: {}", prop); continue; }
                                     }
-                                    println!("✅ Set ASMR {} to {}", prop, v);
+                                    println!("  {} {} → {}%", "✔".bold().truecolor(80,255,140), prop.truecolor(255,200,80), v.to_string().bold().truecolor(255,255,255));
                                 } else {
-                                    println!("❌ Value must be a number from 0 to 100");
+                                    println!("  {} {}", "✗".bold().truecolor(255,80,80), "Value must be a number 0–100".truecolor(255,140,80));
                                 }
                             } else {
-                                println!("❌ Missing value. Usage: asmr {} <0-100>", prop);
+                                println!("  {} {} {} {}", "✗".bold().truecolor(255,80,80), "Missing value. Usage:".truecolor(255,140,80), "asmr".truecolor(255,200,80), format!("{} <0–100>", prop).truecolor(255,255,255));
                             }
                         }
                     }
                 },
                 "quit" | "exit" => {
-                    println!("Goodbye! 👋");
+                    println!("\n  {} {}\n", "◈".truecolor(120,80,255), "Goodbye — happy typing! 👋".bold().truecolor(255,255,255));
                     std::process::exit(0);
                 },
-                _ => println!("Unknown command. Type 'help' for options."),
+                _ => println!("  {} {} {}", "?".bold().truecolor(255,200,80), "Unknown command:".truecolor(180,180,180), format!("{:?} — type help", parts[0]).truecolor(120,80,255)),
             }
         }
         });
