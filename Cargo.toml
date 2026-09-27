@@ -17,6 +17,7 @@ image = { version = "0.25", features = ["jpeg", "png"] }
 muda = "0.20.0"
 rustyline = { version = "18.0.1", features = ["derive"] }
 mimalloc = "0.1.52"
+colored = "3.1.1"
 
 [profile.release]
 opt-level = 3

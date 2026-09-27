@@ -321,16 +321,28 @@ pub fn run(is_cli: bool) {
         *current_pack_name.write().unwrap() = first.clone();
     }
     
+    use colored::Colorize;
     let pack_clone = current_pack.clone();
     let ax_trusted = unsafe { AXIsProcessTrusted() };
 
-        if is_cli {
-        println!("🎧 Thock is running in Lightweight CLI mode...");
+    if !ax_trusted {
+        // Auto-open settings to prompt the user
+        let _ = std::process::Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+            .spawn();
+        let _ = std::process::Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEventAccess")
+            .spawn();
+    }
+
+    if is_cli {
+        println!("{} {}", "🎧".magenta(), "Thock is running in Lightweight CLI mode...".bold().cyan());
         if !ax_trusted {
-            println!("⚠️ WARNING: Accessibility permissions not granted. Keypresses may not be detected.");
+            println!("{} {}", "⚠️  WARNING:".bold().red(), "Input Monitoring / Accessibility permissions not granted. Keypresses will not be detected!".yellow());
+            println!("   {}", "System Settings has been opened. Please grant permission and restart.".bold().yellow());
         }
-        println!("Current Pack: {}", *current_pack_name.read().unwrap());
-        println!("Press Ctrl+C to quit.");
+        println!("{} {}", "Current Pack:".green(), current_pack_name.read().unwrap().bold().white());
+        println!("{} {}", "Status:".green(), "Running... Press Ctrl+C to quit.".dimmed());
     }
 
     // Audio + CGEventTap
@@ -554,8 +566,8 @@ pub fn run(is_cli: bool) {
 
     if is_cli {
         // Print banner only once here (removed duplicate inside the spawned thread below)
-        println!("\n🎧 Thock Headless CLI Mode Active");
-        println!("Type 'help' to see available commands.\n");
+        println!("\n{} {}", "🎧".magenta(), "Thock Headless CLI Mode Active".bold().cyan());
+        println!("Type {} to see available commands.\n", "'help'".green());
         
         // Run CLI REPL in a background thread so the Main Thread is dedicated
         // purely to the macOS CGEventTap. MacOS heavily throttles background
@@ -906,8 +918,14 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
         
         let ax_trusted = unsafe { AXIsProcessTrusted() };
         let ax_banner = if !ax_trusted {
-            r#"<div class="bg-red-500/90 text-white p-3 rounded-xl mb-4 text-center font-semibold shadow-lg border border-red-400">
-                ⚠️ Accessibility permissions not granted. Keypresses will not be detected. Enable in System Settings &gt; Privacy &amp; Security &gt; Accessibility.
+            r#"<div class="bg-red-500/90 text-white p-4 rounded-xl mb-4 shadow-lg border border-red-400 flex flex-col sm:flex-row items-center justify-between gap-4">
+                <div class="font-semibold text-center sm:text-left">
+                    ⚠️ Input Monitoring / Accessibility permission missing.<br/>
+                    <span class="text-sm font-normal text-red-100">Keypresses cannot be detected. Please enable it in System Settings.</span>
+                </div>
+                <button onclick="safeIpc({type: 'open_settings'})" class="whitespace-nowrap px-4 py-2 bg-white text-red-600 font-bold rounded-lg shadow hover:bg-red-100 transition-colors">
+                    Open Settings
+                </button>
             </div>"#
         } else { "" };
         
@@ -930,6 +948,14 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
             .with_ipc_handler(move |req: wry::http::Request<String>| {
                 if let Ok(msg) = serde_json::from_str::<IpcMessage>(req.body()) {
                     match msg.r#type.as_str() {
+                        "open_settings" => {
+                            let _ = std::process::Command::new("open")
+                                .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+                                .spawn();
+                            let _ = std::process::Command::new("open")
+                                .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEventAccess")
+                                .spawn();
+                        }
                         "set_volume" => {
                             if let Some(val) = msg.value {
                                 if let Some(v) = val.as_u64() {
