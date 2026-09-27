@@ -117,69 +117,32 @@ extern "C" {
 
 static VOL: AtomicU32 = AtomicU32::new(100);
 
-// ArcBuffer stores the raw compressed file bytes (WAV/OGG).
-// Decoding to f32 PCM happens lazily when Iterator::next() is first called,
-// inside rodio's internal stream thread — so it never blocks the CGEventTap.
-// RAM footprint per pack: ~300KB (bytes) instead of ~9MB (decoded f32 PCM).
+// ArcBytes stores raw compressed audio bytes (WAV/OGG).
+// rodio's Decoder streams lazily — first-sample latency is ~0ms.
+// RAM footprint: ~30KB per file (compressed) vs ~60KB decoded f32.
+// 34-file pack: ~1MB RAM instead of ~2MB. 114-file pack: ~3MB instead of ~7MB.
 #[derive(Clone)]
-pub struct ArcPcm {
-    pub channels: u16,
-    pub sample_rate: u32,
-    pub samples: Arc<Vec<f32>>,
+pub struct ArcBytes {
+    pub bytes: Arc<Vec<u8>>,
 }
 
-impl ArcPcm {
-    fn with_volume(self, vol: f32) -> ArcPcmSource {
-        ArcPcmSource {
-            pcm: self,
-            cursor: 0,
-            volume: vol,
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct ArcPcmSource {
-    pcm: ArcPcm,
-    cursor: usize,
-    volume: f32,
-}
-
-impl Iterator for ArcPcmSource {
-    type Item = f32;
-    #[inline]
-    fn next(&mut self) -> Option<f32> {
-        if self.cursor < self.pcm.samples.len() {
-            let sample = self.pcm.samples[self.cursor] * self.volume;
-            self.cursor += 1;
-            Some(sample)
+impl ArcBytes {
+    fn play(self, vol: f32, pitch: f32) -> Option<impl Source<Item = f32>> {
+        use rodio::Decoder;
+        use std::io::Cursor;
+        let dec = Decoder::new(Cursor::new((*self.bytes).clone())).ok()?;
+        let src = dec.convert_samples::<f32>().amplify(vol);
+        if (pitch - 1.0).abs() > 0.01 {
+            Some(src.speed(pitch))
         } else {
-            None
+            Some(src.speed(1.0)) // uniform type
         }
     }
 }
 
-impl Source for ArcPcmSource {
-    fn current_frame_len(&self) -> Option<usize> {
-        None  // Let rodio choose its own chunk size; avoids audio-callback stalls.
-    }
-    fn channels(&self) -> u16 { self.pcm.channels }
-    fn sample_rate(&self) -> u32 { self.pcm.sample_rate }
-    fn total_duration(&self) -> Option<std::time::Duration> {
-        let frames = self.pcm.samples.len() as u64 / self.pcm.channels as u64;
-        Some(std::time::Duration::from_nanos(frames * 1_000_000_000 / self.pcm.sample_rate as u64))
-    }
-}
-
-fn load_audio_file(path: &Path) -> Option<ArcPcm> {
-    use rodio::Decoder;
-    use std::io::{BufReader, Cursor};
+fn load_audio_file(path: &Path) -> Option<ArcBytes> {
     let bytes = fs::read(path).ok()?;
-    let decoder = Decoder::new(BufReader::new(Cursor::new(bytes))).ok()?;
-    let channels = decoder.channels();
-    let sample_rate = decoder.sample_rate();
-    let samples: Vec<f32> = decoder.convert_samples::<f32>().collect();
-    Some(ArcPcm { channels, sample_rate, samples: Arc::new(samples) })
+    Some(ArcBytes { bytes: Arc::new(bytes) })
 }
 
 fn default_pitch() -> f32 { 1.0 }
@@ -202,8 +165,8 @@ struct PackConfig {
 }
 
 struct LoadedPack {
-    defaults: Vec<ArcPcm>,
-    mappings: HashMap<u64, ArcPcm>,
+    defaults: Vec<ArcBytes>,
+    mappings: HashMap<u64, ArcBytes>,
     pitch: f32,
     vol_mult: f32,
     procedural: Option<dsp::ProceduralConfig>,
@@ -587,11 +550,8 @@ pub fn run(is_cli: bool) {
                         };
 
                         if let Some(a) = audio {
-                            let src = a.clone().with_volume(vol);
-                            if (pack.pitch - 1.0).abs() > 0.01 {
-                                let _ = handle.play_raw(src.speed(pack.pitch).convert_samples());
-                            } else {
-                                let _ = handle.play_raw(src);
+                            if let Some(src) = a.clone().play(vol * velocity_mult, pack.pitch) {
+                                let _ = handle.play_raw(src.convert_samples());
                             }
                         }
                     }
