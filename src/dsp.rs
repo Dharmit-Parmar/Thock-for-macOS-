@@ -298,11 +298,11 @@ impl ProceduralSwitch {
         };
         let total = (srf * tail_ms / 1000.0) as u64;
 
-        let seed = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .subsec_nanos()
-            .wrapping_add((impact_fc * 173.0) as u32);
+        // Fast seed: use atomic counter instead of syscall to avoid latency on hot path.
+        // Combine cursor position (incremented every call) with impact_fc for uniqueness.
+        static SEED_CTR: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+        let ctr = SEED_CTR.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let seed = ctr.wrapping_add((impact_fc * 173.0) as u32).wrapping_mul(2654435761);
 
         Self {
             sr, cursor: 0, total, dt: 1.0 / srf, t: 0.0,

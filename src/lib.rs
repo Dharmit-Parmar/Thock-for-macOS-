@@ -161,7 +161,7 @@ impl Iterator for ArcPcmSource {
 
 impl Source for ArcPcmSource {
     fn current_frame_len(&self) -> Option<usize> {
-        Some(self.pcm.samples.len() - self.cursor)
+        None  // Let rodio choose its own chunk size; avoids audio-callback stalls.
     }
     fn channels(&self) -> u16 { self.pcm.channels }
     fn sample_rate(&self) -> u32 { self.pcm.sample_rate }
@@ -411,7 +411,12 @@ pub fn run(is_cli: bool) {
             let mut rng_seed: u32 = 0xdeadbeef;
             let mut thunder_cooldown: u32 = 0;
             loop {
-                std::thread::sleep(std::time::Duration::from_millis(50));
+                let rain_on = ASMR_RAIN_ON.load(Ordering::Relaxed) != 0;
+                let wind_on_q = ASMR_WIND_ON.load(Ordering::Relaxed) != 0;
+                let thunder_on_q = ASMR_THUNDER_ON.load(Ordering::Relaxed) != 0;
+                // When all layers are off, sleep much longer to avoid spinning 20x/sec
+                let sleep_ms = if !rain_on && !wind_on_q && !thunder_on_q { 500 } else { 50 };
+                std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
 
                 let m = ASMR_MASTER_VOL.load(Ordering::Relaxed) as f32 / 100.0;
 
@@ -449,7 +454,8 @@ pub fn run(is_cli: bool) {
                             Ok(decoder) => {
                                 let src = decoder.convert_samples::<f32>();
                                 thunder_sink.append(src);
-                                thunder_sink.set_volume(t_vol * m);
+                                let t_int = ASMR_THUNDER_INT.load(Ordering::Relaxed) as f32 / 100.0;
+                                thunder_sink.set_volume(t_vol * t_int * m);
                                 // Minimum cooldown between strikes (20 ticks = 1 second baseline)
                                 let min_cd = 40u32 + ((100 - t_freq) as u32 * 8);
                                 thunder_cooldown = min_cd;
@@ -632,8 +638,9 @@ pub fn run(is_cli: bool) {
                 },
                 "packs" => {
                     println!("📦 Available Packs:");
+                    let active_pack = current_pack_name.read().unwrap().clone();
                     for p in &available_packs {
-                        let active = if *current_pack_name.read().unwrap() == *p { " (Active)" } else { "" };
+                        let active = if active_pack == *p { " (Active)" } else { "" };
                         println!("  - {}{}", p, active);
                     }
                 },
@@ -943,7 +950,7 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
         let ipc_packs_dir_clone = ipc_packs_dir.clone();
         
         let webview = wry::WebViewBuilder::new(&window)
-            .with_devtools(true)
+            .with_devtools(cfg!(debug_assertions))
             .with_html(final_html)
             .with_ipc_handler(move |req: wry::http::Request<String>| {
                 if let Ok(msg) = serde_json::from_str::<IpcMessage>(req.body()) {
