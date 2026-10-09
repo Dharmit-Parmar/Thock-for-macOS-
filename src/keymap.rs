@@ -1,11 +1,11 @@
-use std::collections::HashMap;
+
 use std::sync::OnceLock;
 
 // Static keymap — built exactly once on first keystroke, never rebuilt.
 // Eliminates ~50 HashMap::insert() allocations per keypress.
-static KEYMAP: OnceLock<HashMap<u16, u64>> = OnceLock::new();
+static KEYMAP: OnceLock<[Option<u64>; 128]> = OnceLock::new();
 
-pub fn get_key_map() -> &'static HashMap<u16, u64> {
+pub fn get_key_map() -> &'static [Option<u64>; 128] {
     KEYMAP.get_or_init(|| {
         let standard: &[(u16, u64)] = &[
             (53, 1),   // Escape
@@ -109,9 +109,11 @@ pub fn get_key_map() -> &'static HashMap<u16, u64> {
             (92, 73),  // Kp9
             (65, 52),  // KpDecimal
         ];
-        let mut map = HashMap::with_capacity(standard.len());
+                let mut map = [None; 128];
         for &(cg_code, mech_code) in standard {
-            map.insert(cg_code, mech_code);
+            if (cg_code as usize) < 128 {
+                map[cg_code as usize] = Some(mech_code);
+            }
         }
         map
     })

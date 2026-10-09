@@ -101,10 +101,9 @@ use std::{
     fs,
     path::Path,
     sync::{
-        atomic::{AtomicU32, AtomicU64, Ordering},
+        atomic::{AtomicU32, Ordering},
         Arc, RwLock,
     },
-    thread,
     time::Instant,
 };
 
@@ -117,32 +116,81 @@ extern "C" {
 
 static VOL: AtomicU32 = AtomicU32::new(100);
 
-// ArcBytes stores raw compressed audio bytes (WAV/OGG).
+// PredecodedAudio stores raw compressed audio bytes (WAV/OGG).
 // rodio's Decoder streams lazily — first-sample latency is ~0ms.
 // RAM footprint: ~30KB per file (compressed) vs ~60KB decoded f32.
 // 34-file pack: ~1MB RAM instead of ~2MB. 114-file pack: ~3MB instead of ~7MB.
+
 #[derive(Clone)]
-pub struct ArcBytes {
-    pub bytes: Arc<Vec<u8>>,
+struct PredecodedAudio {
+    samples: std::sync::Arc<[f32]>,
+    channels: u16,
+    sample_rate: u32,
 }
 
-impl ArcBytes {
-    fn play(self, vol: f32, pitch: f32) -> Option<impl Source<Item = f32>> {
-        use rodio::Decoder;
-        use std::io::Cursor;
-        let dec = Decoder::new(Cursor::new((*self.bytes).clone())).ok()?;
-        let src = dec.convert_samples::<f32>().amplify(vol);
+impl PredecodedAudio {
+    fn new(path: &std::path::Path) -> Option<Self> {
+        let bytes = std::fs::read(path).ok()?;
+        let cursor = std::io::Cursor::new(bytes);
+        let decoder = rodio::Decoder::new(cursor).ok()?;
+        let channels = decoder.channels();
+        let sample_rate = decoder.sample_rate();
+        let samples: Vec<f32> = rodio::Source::convert_samples::<f32>(decoder).collect();
+        Some(Self {
+            samples: std::sync::Arc::from(samples.into_boxed_slice()),
+            channels,
+            sample_rate,
+        })
+    }
+
+    fn play(&self, vol: f32, pitch: f32) -> Option<impl rodio::Source<Item = f32>> {
+        let src = ZeroCopySource {
+            samples: self.samples.clone(),
+            channels: self.channels,
+            sample_rate: self.sample_rate,
+            cursor: 0,
+        }.amplify(vol);
+        
         if (pitch - 1.0).abs() > 0.01 {
-            Some(src.speed(pitch))
+            Some(rodio::source::Source::speed(src, pitch))
         } else {
-            Some(src.speed(1.0)) // uniform type
+            Some(rodio::source::Source::speed(src, 1.0))
         }
     }
 }
 
-fn load_audio_file(path: &Path) -> Option<ArcBytes> {
-    let bytes = fs::read(path).ok()?;
-    Some(ArcBytes { bytes: Arc::new(bytes) })
+struct ZeroCopySource {
+    samples: std::sync::Arc<[f32]>,
+    channels: u16,
+    sample_rate: u32,
+    cursor: usize,
+}
+
+impl Iterator for ZeroCopySource {
+    type Item = f32;
+    #[inline(always)]
+    fn next(&mut self) -> Option<f32> {
+        if self.cursor < self.samples.len() {
+            let sample = self.samples[self.cursor];
+            self.cursor += 1;
+            Some(sample)
+        } else {
+            None
+        }
+    }
+}
+
+impl rodio::Source for ZeroCopySource {
+    fn current_frame_len(&self) -> Option<usize> { None }
+    fn channels(&self) -> u16 { self.channels }
+    fn sample_rate(&self) -> u32 { self.sample_rate }
+    fn total_duration(&self) -> Option<std::time::Duration> {
+        Some(std::time::Duration::from_secs_f32((self.samples.len() / self.channels as usize) as f32 / self.sample_rate as f32))
+    }
+}
+
+fn load_audio_file(path: &Path) -> Option<PredecodedAudio> {
+    PredecodedAudio::new(path)
 }
 
 fn default_pitch() -> f32 { 1.0 }
@@ -165,8 +213,8 @@ struct PackConfig {
 }
 
 struct LoadedPack {
-    defaults: Vec<ArcBytes>,
-    mappings: HashMap<u64, ArcBytes>,
+    defaults: Vec<PredecodedAudio>,
+    mappings: HashMap<u64, PredecodedAudio>,
     pitch: f32,
     vol_mult: f32,
     procedural: Option<dsp::ProceduralConfig>,
@@ -217,8 +265,9 @@ fn load_pack(pack_dir: &Path) -> Option<LoadedPack> {
 }
 
 #[derive(Deserialize)]
-struct IpcMessage {
-    r#type: String,
+struct IpcMessage<'a> {
+    #[serde(borrow)]
+    r#type: &'a str,
     value: Option<serde_json::Value>,
 }
 
@@ -413,7 +462,7 @@ pub fn run(is_cli: bool) {
         thunder_sink.play();
 
         // Volume-control + thunder-retrigger polling thread
-        let _asmr_ctrl = std::thread::spawn(move || {
+        let _asmr_ctrl = std::thread::Builder::new().stack_size(32 * 1024).spawn(move || {
             use std::sync::atomic::Ordering;
             use crate::dsp::*;
             let mut rng_seed: u32 = 0xdeadbeef;
@@ -434,14 +483,14 @@ pub fn run(is_cli: bool) {
                 let rain_dens = ASMR_RAIN_DENS.load(Ordering::Relaxed) as f32 / 100.0;
                 // Density acts as an intensity volume scaler (0.3x to 1.0x) to avoid pitch-shifting
                 let rain_intensity = 0.3 + (rain_dens * 0.7);
-                rain_sink.set_volume(if rain_on { rain_v * rain_intensity * m } else { 0.0 });
+                if rain_on { rain_sink.play(); rain_sink.set_volume(rain_v * rain_intensity * m); } else { rain_sink.pause(); }
 
                 // Wind
                 let wind_on = ASMR_WIND_ON.load(Ordering::Relaxed) != 0;
                 let wind_v = ASMR_WIND_VOL.load(Ordering::Relaxed) as f32 / 100.0;
                 let wind_gust = ASMR_WIND_GUST.load(Ordering::Relaxed) as f32 / 100.0;
                 let wind_intensity = 0.3 + (wind_gust * 0.7);
-                wind_sink.set_volume(if wind_on { wind_v * wind_intensity * m } else { 0.0 });
+                if wind_on { wind_sink.play(); wind_sink.set_volume(wind_v * wind_intensity * m); } else { wind_sink.pause(); }
 
                 // Thunder — retrigger one-shot randomly
                 let thunder_on = ASMR_THUNDER_ON.load(Ordering::Relaxed) != 0;
@@ -490,8 +539,8 @@ pub fn run(is_cli: bool) {
 
         // Lock-free velocity tracking: store nanoseconds since UNIX epoch as AtomicU64.
         // Avoids a write-lock acquisition on every single KeyDown event.
-        let epoch = Instant::now();
-        let last_press_ns = Arc::new(AtomicU64::new(0));
+        let _epoch = Instant::now();
+        let last_press = std::cell::Cell::new(std::time::Instant::now());
         let previous_flags = std::cell::Cell::new(0u64);
         let tap_res = CGEventTap::new(
             CGEventTapLocation::Session,
@@ -509,13 +558,12 @@ pub fn run(is_cli: bool) {
                     previous_flags.set(current_flags);
                 }
 
-                if is_autorepeat && !is_keyup { return None; }
+                if is_autorepeat && !is_keyup { return Some(cg_event.to_owned()); }
 
                 let mut velocity_mult = 1.0f32;
                 if !is_keyup {
-                    let now_ns = epoch.elapsed().as_nanos() as u64;
-                    let prev_ns = last_press_ns.swap(now_ns, Ordering::Relaxed);
-                    let elapsed = (now_ns.saturating_sub(prev_ns)) as f32 / 1_000_000_000.0;
+                    let now = std::time::Instant::now();
+                    let elapsed = now.duration_since(last_press.replace(now)).as_secs_f32();
                     velocity_mult = (0.5 + (0.1 / (elapsed + 0.01))).clamp(0.8, 1.5);
                 }
 
@@ -531,7 +579,8 @@ pub fn run(is_cli: bool) {
                         // Procedural audio plays both keydown and keyup
                         let _ = handle.play_raw(proc.amplify(vol).convert_samples());
                     } else if !is_keyup {
-                        let audio = if let Some(code) = keymap::get_key_map().get(&keycode) {
+                        let key_map = keymap::get_key_map();
+                        let audio = if let Some(Some(code)) = key_map.get(keycode as usize) {
                             if let Some(mapped) = pack.mappings.get(code) {
                                 Some(mapped)
                             } else if !pack.defaults.is_empty() {
@@ -550,13 +599,13 @@ pub fn run(is_cli: bool) {
                         };
 
                         if let Some(a) = audio {
-                            if let Some(src) = a.clone().play(vol * velocity_mult, pack.pitch) {
-                                let _ = handle.play_raw(src.convert_samples());
+                            if let Some(src) = a.play(vol * velocity_mult, pack.pitch) {
+                                let _ = handle.play_raw(src);
                             }
                         }
                     }
                 }
-                None
+                Some(cg_event.to_owned())
             }
         );
 
@@ -583,7 +632,7 @@ pub fn run(is_cli: bool) {
         // threads, which causes input latency. Running the event tap on the
         // main thread fixes the latency instantly.
         let packs_for_rl = available_packs.clone();
-        thread::spawn(move || {
+        let _ = std::thread::Builder::new().stack_size(256 * 1024).spawn(move || {
             let helper = ThockHelper {
                 commands: vec!["vol".to_string(), "pack".to_string(), "proc".to_string(), "pitch".to_string(), "help".to_string(), "exit".to_string()],
                 packs: packs_for_rl,
@@ -802,7 +851,7 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
         audio_thread();
         return;
     } else {
-        thread::spawn(audio_thread);
+        let _ = std::thread::Builder::new().stack_size(256 * 1024).spawn(audio_thread);
     }
 
     let event_loop = tao::event_loop::EventLoop::new();
@@ -981,11 +1030,12 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
         let ipc_packs_dir_clone = ipc_packs_dir.clone();
         
         let webview = wry::WebViewBuilder::new(&window)
-            .with_devtools(cfg!(debug_assertions))
+            .with_devtools(false)
+            .with_incognito(true)
             .with_html(final_html)
             .with_ipc_handler(move |req: wry::http::Request<String>| {
                 if let Ok(msg) = serde_json::from_str::<IpcMessage>(req.body()) {
-                    match msg.r#type.as_str() {
+                    match msg.r#type {
                         "open_settings" => {
                             let _ = std::process::Command::new("open")
                                 .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
