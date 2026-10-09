@@ -181,7 +181,7 @@ impl Iterator for ZeroCopySource {
 }
 
 impl rodio::Source for ZeroCopySource {
-    fn current_frame_len(&self) -> Option<usize> { None }
+    fn current_frame_len(&self) -> Option<usize> { Some(self.samples.len() - self.cursor) }
     fn channels(&self) -> u16 { self.channels }
     fn sample_rate(&self) -> u32 { self.sample_rate }
     fn total_duration(&self) -> Option<std::time::Duration> {
@@ -558,7 +558,7 @@ pub fn run(is_cli: bool) {
                     previous_flags.set(current_flags);
                 }
 
-                if is_autorepeat && !is_keyup { return Some(cg_event.to_owned()); }
+                if is_autorepeat && !is_keyup { return None; }
 
                 let mut velocity_mult = 1.0f32;
                 if !is_keyup {
@@ -605,7 +605,7 @@ pub fn run(is_cli: bool) {
                         }
                     }
                 }
-                Some(cg_event.to_owned())
+                None
             }
         );
 
