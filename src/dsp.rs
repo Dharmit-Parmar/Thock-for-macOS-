@@ -4,8 +4,9 @@ use std::time::Duration;
 // ─── Xorshift PRNG ────────────────────────────────────────────────────────────
 pub struct PRNG { seed: u32 }
 impl PRNG {
+    #[inline(always)]
     pub fn new(seed: u32) -> Self { Self { seed: seed | 1 } }
-    #[inline]
+    #[inline(always)]
     pub fn next_f32(&mut self) -> f32 {
         self.seed ^= self.seed << 13;
         self.seed ^= self.seed >> 17;
@@ -14,35 +15,45 @@ impl PRNG {
     }
 }
 
-// ─── TDF-II Biquad ────────────────────────────────────────────────────────────
-#[derive(Clone)]
+// ─── TDF-II Biquad Filter ─────────────────────────────────────────────────────
+#[derive(Clone, Copy)]
 pub struct Biquad {
     b0: f32, b1: f32, b2: f32,
     a1: f32, a2: f32,
     s1: f32, s2: f32,
 }
+
 impl Biquad {
     pub fn lowpass(sr: f32, fc: f32, q: f32) -> Self {
-        let w = 2.0 * std::f32::consts::PI * (fc / sr).min(0.499);
-        let cw = w.cos(); let alpha = w.sin() / (2.0 * q);
+        let w = 2.0 * std::f32::consts::PI * (fc / sr).clamp(0.001, 0.495);
+        let cw = w.cos();
+        let alpha = w.sin() / (2.0 * q.max(0.1));
         let a0r = 1.0 / (1.0 + alpha);
-        let b = (1.0 - cw) / 2.0;
-        Self { b0: b*a0r, b1: (1.0-cw)*a0r, b2: b*a0r, a1: -2.0*cw*a0r, a2: (1.0-alpha)*a0r, s1:0.0, s2:0.0 }
+        let b = (1.0 - cw) * 0.5;
+        Self { b0: b * a0r, b1: (1.0 - cw) * a0r, b2: b * a0r,
+               a1: -2.0 * cw * a0r, a2: (1.0 - alpha) * a0r, s1: 0.0, s2: 0.0 }
     }
-pub fn highpass(sr: f32, fc: f32, q: f32) -> Self {
-        let w = 2.0 * std::f32::consts::PI * (fc / sr).min(0.499);
-        let cw = w.cos(); let alpha = w.sin() / (2.0 * q);
-        let a0r = 1.0 / (1.0 + alpha);
-        let b = (1.0 + cw) / 2.0;
-        Self { b0: b*a0r, b1: -(1.0+cw)*a0r, b2: b*a0r, a1: -2.0*cw*a0r, a2: (1.0-alpha)*a0r, s1:0.0, s2:0.0 }
-    }
+
     pub fn bandpass(sr: f32, fc: f32, q: f32) -> Self {
-        let w = 2.0 * std::f32::consts::PI * (fc / sr).min(0.499);
-        let cw = w.cos(); let alpha = w.sin() / (2.0 * q);
+        let w = 2.0 * std::f32::consts::PI * (fc / sr).clamp(0.001, 0.495);
+        let cw = w.cos();
+        let alpha = w.sin() / (2.0 * q.max(0.1));
         let a0r = 1.0 / (1.0 + alpha);
-        Self { b0: alpha*a0r, b1: 0.0, b2: -alpha*a0r, a1: -2.0*cw*a0r, a2: (1.0-alpha)*a0r, s1:0.0, s2:0.0 }
+        Self { b0: alpha * a0r, b1: 0.0, b2: -alpha * a0r,
+               a1: -2.0 * cw * a0r, a2: (1.0 - alpha) * a0r, s1: 0.0, s2: 0.0 }
     }
-    #[inline]
+
+    pub fn highpass(sr: f32, fc: f32, q: f32) -> Self {
+        let w = 2.0 * std::f32::consts::PI * (fc / sr).clamp(0.001, 0.495);
+        let cw = w.cos();
+        let alpha = w.sin() / (2.0 * q.max(0.1));
+        let a0r = 1.0 / (1.0 + alpha);
+        let b = (1.0 + cw) * 0.5;
+        Self { b0: b * a0r, b1: -(1.0 + cw) * a0r, b2: b * a0r,
+               a1: -2.0 * cw * a0r, a2: (1.0 - alpha) * a0r, s1: 0.0, s2: 0.0 }
+    }
+
+    #[inline(always)]
     pub fn process(&mut self, x: f32) -> f32 {
         let y = self.b0 * x + self.s1;
         self.s1 = self.b1 * x - self.a1 * y + self.s2;
@@ -51,11 +62,10 @@ pub fn highpass(sr: f32, fc: f32, q: f32) -> Self {
     }
 }
 
-// ─── Fast Padé tanh (output only, never inside filter states) ─────────────────
-#[inline]
-fn soft_clip(x: f32) -> f32 {
-    let x2 = x * x;
-    x * (27.0 + x2) / (27.0 + 9.0 * x2)
+// ─── Fast Algebraic Soft Limiter (Strictly bounded to [-1.0, 1.0]) ───────────
+#[inline(always)]
+fn soft_limit(x: f32) -> f32 {
+    x / (1.0 + x * x).sqrt()
 }
 
 // ─── Config ───────────────────────────────────────────────────────────────────
@@ -90,35 +100,43 @@ impl Default for ProceduralConfig {
     }
 }
 
-// ─── Modal oscillator ─────────────────────────────────────────────────────────
-// Generates ONE damped sinusoid. Used for the RESONANT TAIL only,
-// NOT the main sound. The main sound is the transient noise burst.
-struct Modal {
-    amp: f32,
-    t_start: f32,  // delay before this mode begins (in seconds)
+// ─── Resonant Modal Structural Ping (Inharmonic Chladni Plate Modes) ─────────
+#[derive(Clone, Copy)]
+struct ModalMode {
     u: f32, v: f32,
     cos_w: f32, sin_w: f32,
-    decay_coeff: f32,
+    decay: f32,
+    amp: f32,
 }
-impl Modal {
-    fn new(freq: f32, decay_secs: f32, amp: f32, t_start: f32, sr: f32) -> Self {
-        let tau = decay_secs / 6.908;
-        let w = 2.0 * std::f32::consts::PI * freq / sr;
-        Self { amp, t_start, u: 1.0, v: 0.0, cos_w: w.cos(), sin_w: w.sin(),
-               decay_coeff: (-1.0 / (sr * tau)).exp() }
+
+impl ModalMode {
+    fn new(freq: f32, decay_secs: f32, amp: f32, sr: f32) -> Self {
+        let tau = decay_secs.max(0.001) / 6.908;
+        let w = 2.0 * std::f32::consts::PI * freq.clamp(20.0, sr * 0.48) / sr;
+        Self {
+            u: 0.0, v: 0.0, // starts at 0 -> zero step discontinuity clicks
+            cos_w: w.cos(), sin_w: w.sin(),
+            decay: (-1.0 / (sr * tau)).exp(),
+            amp,
+        }
     }
-    #[inline]
-    fn sample(&mut self, t: f32) -> f32 {
-        if t < self.t_start { return 0.0; }
-        let next_u = self.u * self.cos_w - self.v * self.sin_w;
-        let next_v = self.u * self.sin_w + self.v * self.cos_w;
-        self.u = next_u * self.decay_coeff;
-        self.v = next_v * self.decay_coeff;
-        self.amp * self.v
+
+    #[inline(always)]
+    fn excite(&mut self, impulse: f32) {
+        self.v += impulse * self.amp;
+    }
+
+    #[inline(always)]
+    fn step(&mut self) -> f32 {
+        let next_u = (self.u * self.cos_w - self.v * self.sin_w) * self.decay;
+        let next_v = (self.u * self.sin_w + self.v * self.cos_w) * self.decay;
+        self.u = next_u;
+        self.v = next_v;
+        self.v
     }
 }
 
-// ─── Engine ───────────────────────────────────────────────────────────────────
+// ─── Procedural Switch Synthesizer ────────────────────────────────────────────
 pub struct ProceduralSwitch {
     sr: u32,
     cursor: u64,
@@ -127,203 +145,156 @@ pub struct ProceduralSwitch {
     t: f32,
     prng: PRNG,
 
-    // THE MAIN SOUND: filtered broadband transient (the plastic impact)
-    impact_lpf: Biquad,     // shapes the "thack" noise into the right frequency
-    impact_hpf: Biquad,     // removes sub-bass from impact
-    impact_env: f32,        // envelope for the initial impact burst
-    impact_decay: f32,      // how fast impact decays (very fast, <5ms)
-    impact_vol: f32,        // amplitude of the impact
+    // Contact mechanics (smooth physical rise + decay)
+    t_rise: f32,
+    tau_decay: f32,
+    impact_vol: f32,
 
-    // SECONDARY: modal resonance tail (subtle tonal body after the impact)
-    modes: [Modal; 3],
-    modal_vol: f32,         // kept LOW so it doesn't sound like a bell
+    // Acoustic Formants: cavity "thock" & switch housing "clack"
+    thock_cavity: Biquad,
+    thock_vol: f32,
+    clack_housing: Biquad,
+    clack_vol: f32,
+    presence_lpf: Biquad,
+    topout_hpf: Option<Biquad>,
 
-    // TERTIARY: stem travel friction (very quiet, just texture)
-    friction_bpf: Biquad,
-    friction_env: f32,
-    friction_decay: f32,
-    friction_vol: f32,
+    // Inharmonic structural modes (excited naturally by impulse)
+    modes: [ModalMode; 3],
 
-    // Switch-type click mechanism
-    click_env: f32,
-    click_decay: f32,
+    // Click / Tactile mechanism
+    is_clicky: bool,
+    is_tactile: bool,
     click_bpf: Biquad,
+    click_t0: f32,
     click_vol: f32,
 
-    // Output shaping
-    output_lpf: Biquad,
-    dc_hpf: Biquad,
-    foam_sat: f32,
-
+    // Anti-click release fadeout
+    fade_len: u64,
 }
 
 impl ProceduralSwitch {
-    pub fn new(config: ProceduralConfig, is_keyup: bool, velocity: f32) -> Self {
+    pub fn new(config: &ProceduralConfig, is_keyup: bool, velocity: f32) -> Self {
         let sr = 44100u32;
         let srf = sr as f32;
-        let vel = velocity.clamp(0.5, 1.8);
+        let vel = velocity.clamp(0.85, 1.20);
+        let spring_scale = (config.spring_weight / 55.0).clamp(0.7, 1.3);
 
-        // ── Material-dependent impact frequency ──────────────────────────────
-        // This shapes the NOISE BURST, not a sine wave.
-        // Stiffer/denser material = higher-frequency transient.
-        // POM: dense (1.42 g/cm³), moderate stiffness → mid-range "thock"
-        let impact_fc: f32 = match config.plate_material.as_str() {
-            "fr4"                  => 3500.0,
-            "brass"                => 2800.0,
-            "aluminum"             => 2400.0,
-            "nylon"                => 1400.0,
-            "pom"                  => 1200.0, // POM: thocky, not clacky
-            "abs"                  => 1000.0,
-            "polycarbonate" | "pc" =>  700.0, // PC: deep thock
-            _                      => 1200.0,
+        // ── 1. Top-out (Keyup) vs. Bottom-out (Keydown) ────────────────────────
+        let (impact_vol, keyup_pitch_mult, topout_hpf) = if is_keyup {
+            // Natural top-out: -15 dB quieter, high-passed (no heavy plate thock)
+            let vol = spring_scale * 0.18;
+            let hpf = Biquad::highpass(srf, 550.0, 0.707);
+            (vol, 1.85f32, Some(hpf))
+        } else {
+            // Natural bottom-out: full finger kinetic energy
+            let vol = spring_scale * vel * 0.85;
+            (vol, 1.0f32, None)
         };
 
-        // Lube lowers the effective cutoff (smooths the hit)
-        let impact_fc = impact_fc * config.pitch * (1.0 - config.lube_amount * 0.30);
-        // Top-out is higher pitched (thinner housing)
-        let impact_fc = impact_fc * if is_keyup { 1.25 } else { 1.0 };
-
-        // O-rings and foam also reduce the high-frequency content of the impact
-        let impact_fc = impact_fc * (1.0 - config.o_rings * 0.20) * (1.0 - config.foam_mod * 0.15);
-
-        // ── Impact noise filter (BPF not LPF — shapes the "thwack") ──────────
-        // We want a bandpass centered at impact_fc with moderate Q.
-        // This turns white noise into a "click" or "thock" sound.
-        let impact_q = 0.5 + config.lube_amount * 0.5; // lube = wider, smoother
-        let impact_lpf = Biquad::lowpass(srf, impact_fc.min(8000.0), impact_q);
-        let impact_hpf = Biquad::highpass(srf, 80.0, 0.707); // remove sub-bass
-
-        // ── Impact amplitude ─────────────────────────────────────────────────
-        // Spring weight affects how hard the stem lands.
-        let spring_scale = (config.spring_weight / 55.0).clamp(0.6, 1.4);
-        // Keyup is quieter (less force than a deliberate press)
-        let keyup_scale = if is_keyup { 0.55 } else { 1.0 };
-        let impact_vol = spring_scale * vel.powf(1.3) * keyup_scale;
-
-        // ── Impact envelope: very fast decay (2-8ms) ─────────────────────────
-        // This is KEY. A keyboard switch transient is VERY short. 2-5ms.
-        // If it decays slowly, it sounds like a synth pad or instrument.
-        let base_impact_decay_ms: f32 = match config.switch_type.as_str() {
-            "cream"                             => 4.5,  // POM: punchy and short
-            "linear" | "red" | "black"         => 3.5,  // linears: clean, fast
-            "tactile" | "brown" | "holy_panda" => 5.0,  // tactiles: slightly longer body
-            "clicky" | "blue" | "box_jade"     => 3.0,  // clickies: very sharp
-            _                                  => 4.0,
+        // ── 2. Contact Mechanics (Smooth Rise + Exponential Fall) ─────────────
+        // Lubing softens the impact edge (longer rise, smoother impact)
+        let t_rise = (0.0003 + config.lube_amount * 0.0004) * (if is_keyup { 0.6 } else { 1.0 });
+        let base_decay_ms: f32 = match config.switch_type.as_str() {
+            "cream"                             => 3.5,
+            "linear" | "red" | "black"         => 3.0,
+            "tactile" | "brown" | "holy_panda" => 4.2,
+            "clicky" | "blue" | "box_jade"     => 2.5,
+            _                                  => 3.2,
         };
-        // Foam mod makes the impact last slightly longer (dampens = slower release)
-        let impact_decay_ms = base_impact_decay_ms * (1.0 + config.foam_mod * 0.5);
-        // Convert ms decay to per-sample decay coefficient
-        let impact_decay = (-1000.0 / (impact_decay_ms * srf)).exp();
+        let tau_decay = (base_decay_ms / 1000.0) * (1.0 + config.foam_mod * 0.35);
 
-        // ── Modal resonance tail (QUIET — just the body of the material) ─────
-        // This is the subtle tonal "ring" after the impact.
-        // Keep it VERY quiet or it becomes a musical instrument sound.
-        // Modal freq = material resonance. Short decay (≤15ms).
-        let modal_f0: f32 = match config.plate_material.as_str() {
-            "fr4"                  => 2800.0,
-            "brass"                => 2200.0,
-            "aluminum"             => 1800.0,
-            "nylon"                => 1200.0,
-            "pom"                  =>  900.0, // POM: deep resonance
-            "abs"                  =>  750.0,
-            "polycarbonate" | "pc" =>  550.0, // PC: lowest, deepest thock
-            _                      =>  900.0,
-        } * config.pitch * if is_keyup { 1.25 } else { 1.0 };
+        // ── 3. Dual Formant Cavity Tuning (The Physical "Thock" & "Clack") ────
+        // Formant 1: Deep cavity resonance (Keycap + Case air volume)
+        let f_cavity: f32 = match config.plate_material.as_str() {
+            "polycarbonate" | "pc" => 360.0,
+            "pom"                  => 420.0,
+            "nylon"                => 460.0,
+            "abs"                  => 520.0,
+            "fr4"                  => 560.0,
+            "aluminum"             => 620.0,
+            "brass"                => 680.0,
+            _                      => 450.0,
+        } * config.pitch * keyup_pitch_mult * (1.0 - config.foam_mod * 0.20);
 
-        let modal_decay: f32 = match config.plate_material.as_str() {
-            "fr4"                  => 0.020, // FR4 rings longer
-            "brass"                => 0.018,
-            "aluminum"             => 0.014,
-            "polycarbonate" | "pc" => 0.010,
-            "pom"                  => 0.007, // POM: very short tonal body
-            "abs"                  => 0.005,
-            _                      => 0.008,
-        } * (1.0 - config.foam_mod * 0.50) // foam kills the ring
-          * (1.0 + config.o_rings * 0.30); // o-rings extend it slightly
+        // Formant 2: Switch housing impact clack (stiff plastic contact)
+        let f_clack: f32 = match config.plate_material.as_str() {
+            "polycarbonate" | "pc" => 1100.0,
+            "pom"                  => 1350.0,
+            "nylon"                => 1500.0,
+            "abs"                  => 1750.0,
+            "fr4"                  => 2200.0,
+            "aluminum"             => 2600.0,
+            "brass"                => 3000.0,
+            _                      => 1500.0,
+        } * config.pitch * keyup_pitch_mult * (1.0 - config.lube_amount * 0.25);
 
-        // Modal volume: LOW. This adds body, not pitch.
-        // If lube_amount is high, even less (smoother = less tonal ring)
-        let modal_vol = 0.18 * (1.0 - config.lube_amount * 0.30) * spring_scale * keyup_scale;
+        let q_cavity = 2.2 + config.foam_mod * 1.5;
+        let q_clack = 3.0 + config.lube_amount * 1.0;
 
-        // 3 modes — fundamental, 2nd harmonic (slight), 3rd harmonic (tiny)
-        let modal_amp1 = modal_vol;
-        let modal_amp2 = modal_vol * 0.15; // barely audible second harmonic
-        let modal_amp3 = modal_vol * 0.04; // nearly inaudible third
+        let thock_cavity = Biquad::bandpass(srf, f_cavity, q_cavity);
+        let clack_housing = Biquad::bandpass(srf, f_clack, q_clack);
+
+        // Relative balance between deep thock and high clack
+        let (thock_vol, clack_vol) = if is_keyup {
+            (0.15, 0.85) // keyup is mostly high-frequency clack
+        } else {
+            let tv = 0.70 + config.foam_mod * 0.25;
+            let cv = (0.35 - config.foam_mod * 0.15).max(0.10);
+            (tv, cv)
+        };
+
+        // Output presence filter (removes unnatural hiss above 5.5 kHz)
+        let lp_fc = (5800.0 - config.lube_amount * 1500.0 - config.foam_mod * 1200.0).max(2200.0);
+        let presence_lpf = Biquad::lowpass(srf, lp_fc, 0.707);
+
+        // ── 4. Inharmonic Plate Modes (Continuous, Impulse-Excited) ───────────
+        // Chladni plate mode ratios (1.0 : 1.48 : 2.14)
+        let plate_f0 = f_cavity * 1.5;
+        let plate_decay = if is_keyup { 0.003 } else { 0.008 * (1.0 - config.foam_mod * 0.6) };
+        let mode_vol = if is_keyup { 0.015 } else { 0.045 * (1.0 - config.lube_amount * 0.4) };
+
         let modes = [
-            Modal::new(modal_f0,        modal_decay,        modal_amp1, 0.0,    srf),
-            Modal::new(modal_f0 * 2.0,  modal_decay * 0.4,  modal_amp2, 0.001,  srf),
-            Modal::new(modal_f0 * 3.0,  modal_decay * 0.15, modal_amp3, 0.002,  srf),
+            ModalMode::new(plate_f0,        plate_decay,        mode_vol,        srf),
+            ModalMode::new(plate_f0 * 1.48, plate_decay * 0.65, mode_vol * 0.35, srf),
+            ModalMode::new(plate_f0 * 2.14, plate_decay * 0.35, mode_vol * 0.15, srf),
         ];
 
-        // ── Friction: stem travel noise (very subtle) ─────────────────────────
-        // Only present when not heavily lubed. Decays in ~8ms (stem travel time).
-        let roughness = (1.0 - config.lube_amount).max(0.0).powi(2);
-        let friction_fc = 300.0 + roughness * 500.0; // 300-800 Hz
-        let friction_bpf = Biquad::bandpass(srf, friction_fc, 0.7);
-        let friction_vol = roughness * 0.06 * vel; // very quiet
-        let friction_decay = (-120.0 / srf).exp(); // decays in ~8ms
+        // ── 5. Clicky / Tactile Mechanism ─────────────────────────────────────
+        let is_clicky = !is_keyup && matches!(config.switch_type.as_str(), "clicky"|"blue"|"white"|"box_jade");
+        let is_tactile = !is_keyup && matches!(config.switch_type.as_str(), "tactile"|"brown"|"holy_panda");
 
-        // ── Click mechanism (clicky switches only) ────────────────────────────
-        // A sharp pop/click at t≈3ms, separate from the main impact.
-        let click_fc = 2800.0 * config.pitch;
-        let click_bpf = Biquad::bandpass(srf, click_fc.min(5000.0), 1.2);
-        let is_clicky = matches!(config.switch_type.as_str(), "clicky"|"blue"|"white"|"box_jade");
-        let click_vol = if is_clicky && !is_keyup { spring_scale * vel * 0.35 } else { 0.0 };
-        let click_decay = (-800.0 / srf).exp(); // ~5ms click burst
-
-        // ── Tactile bump (tactile switches only) ──────────────────────────────
-        // Tactile switches have a bump around 2-4ms into the press.
-        // Simulated as a second, slightly-delayed smaller impact.
-        // (No separate variable needed — reuse click infrastructure)
-
-        // ── Output LPF ────────────────────────────────────────────────────────
-        // Limit the harsh high end. Real switches top out around 5-7kHz.
-        let lp_fc = 5000.0
-            - config.lube_amount * 1500.0
-            - config.foam_mod * 1000.0;
-        let output_lpf = Biquad::lowpass(srf, lp_fc.max(1200.0), 0.60);
-
-        // Remove DC offset
-        let dc_hpf = Biquad::highpass(srf, 30.0, 0.707);
-
-        // Foam saturation — subtle warmth
-        let foam_sat = config.foam_mod * 0.15;
-
-        // Duration: short for linears, longer for clickies
-        let tail_ms: f32 = match config.switch_type.as_str() {
-            "clicky" | "blue" | "box_jade"     => 80.0,
-            "tactile" | "brown" | "holy_panda" => 65.0,
-            "cream"                             => 45.0,
-            _                                  => 55.0,
+        let click_bpf = if is_clicky {
+            Biquad::bandpass(srf, 3200.0 * config.pitch, 3.5)
+        } else if is_tactile {
+            Biquad::bandpass(srf, 650.0 * config.pitch, 1.8) // warm tactile bump
+        } else {
+            Biquad::bandpass(srf, 1000.0, 1.0)
         };
-        let total = (srf * tail_ms / 1000.0) as u64;
+        let click_t0 = 0.0022; // snaps 2.2 ms into press
+        let click_vol = if is_clicky { 0.38 * spring_scale * vel }
+                        else if is_tactile { 0.18 * spring_scale * vel }
+                        else { 0.0 };
 
-        // Fast seed: use atomic counter instead of syscall to avoid latency on hot path.
-        // Combine cursor position (incremented every call) with impact_fc for uniqueness.
+        // ── 6. Duration & Safe Anti-Click Fade ─────────────────────────────────
+        let tail_ms: f32 = if is_keyup { 24.0 } else { 45.0 };
+        let total = (srf * tail_ms / 1000.0) as u64;
+        let fade_len = (srf * 0.005) as u64; // smooth 5 ms fade-out at end
+
         static SEED_CTR: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
-        let ctr = SEED_CTR.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let seed = ctr.wrapping_add((impact_fc * 173.0) as u32).wrapping_mul(2654435761);
+        let seed = SEED_CTR.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            .wrapping_add((f_cavity * 97.0) as u32)
+            .wrapping_mul(2654435761);
 
         Self {
             sr, cursor: 0, total, dt: 1.0 / srf, t: 0.0,
             prng: PRNG::new(seed),
-            impact_lpf, impact_hpf,
-            impact_env: 1.0,
-            impact_decay,
-            impact_vol,
+            t_rise, tau_decay, impact_vol,
+            thock_cavity, thock_vol,
+            clack_housing, clack_vol,
+            presence_lpf, topout_hpf,
             modes,
-            modal_vol,
-            friction_bpf,
-            friction_env: 1.0,
-            friction_decay,
-            friction_vol,
-            click_env: 1.0,
-            click_decay,
-            click_bpf,
-            click_vol,
-            output_lpf, dc_hpf,
-            foam_sat,
-
+            is_clicky, is_tactile, click_bpf, click_t0, click_vol,
+            fade_len,
         }
     }
 }
@@ -335,54 +306,61 @@ impl Iterator for ProceduralSwitch {
     fn next(&mut self) -> Option<f32> {
         if self.cursor >= self.total { return None; }
         let t = self.t;
+        let cur = self.cursor;
         self.cursor += 1;
         self.t += self.dt;
 
-        let noise = self.prng.next_f32();
+        // 1. Smooth physical contact pulse (no sample-0 click)
+        let pulse = if t < self.t_rise {
+            (std::f32::consts::PI * 0.5 * (t / self.t_rise)).sin()
+        } else {
+            (-(t - self.t_rise) / self.tau_decay).exp()
+        };
 
-        // ── PRIMARY: Impact transient (shaped noise burst) ────────────────────
-        // This IS the keyboard sound. Noise filtered through a BPF centered
-        // at the material's resonant frequency. Very fast decay (2-8ms).
-        let impact_noise = self.impact_hpf.process(
-            self.impact_lpf.process(noise)
-        );
-        let impact = impact_noise * self.impact_env * self.impact_vol;
-        self.impact_env *= self.impact_decay;
+        // 2. High-frequency micro-roughness noise (attenuated with pulse)
+        let noise = self.prng.next_f32() * pulse * 0.20;
+        let excitation = (pulse + noise) * self.impact_vol;
 
-        // ── SECONDARY: Modal resonance tail (subtle tonal body) ───────────────
-        // Very quiet. Just adds the "body" of the material, not musicality.
-        let modal = (self.modes[0].sample(t)
-                  + self.modes[1].sample(t)
-                  + self.modes[2].sample(t)) * self.modal_vol;
+        // 3. Excite inharmonic plate modes with contact impulse
+        if cur < 5 {
+            let imp = excitation / 5.0;
+            self.modes[0].excite(imp);
+            self.modes[1].excite(imp);
+            self.modes[2].excite(imp);
+        }
+        let modal_tail = self.modes[0].step() + self.modes[1].step() + self.modes[2].step();
 
-        // ── TERTIARY: Friction texture (stem travel, very subtle) ─────────────
-        let friction = self.friction_bpf.process(noise) * self.friction_env * self.friction_vol;
-        self.friction_env *= self.friction_decay;
+        // 4. Excite acoustic cavity & housing clack formants
+        let thock = self.thock_cavity.process(excitation) * self.thock_vol;
+        let clack = self.clack_housing.process(excitation) * self.clack_vol;
 
-        // ── Click mechanism burst (clicky switches only, at t≈3ms) ───────────
-        let click = if t > 0.002 && t < 0.015 && self.click_vol > 0.0 {
-            let c = self.click_bpf.process(noise) * self.click_env * self.click_vol;
-            self.click_env *= self.click_decay;
-            c
+        // 5. Clicky snap / Tactile bump (Hann-windowed burst, zero edge clicks)
+        let click = if (self.is_clicky || self.is_tactile) && t > self.click_t0 {
+            let dt = t - self.click_t0;
+            let width = if self.is_clicky { 0.0018 } else { 0.0035 };
+            if dt < width {
+                let env = 0.5 * (1.0 - (2.0 * std::f32::consts::PI * dt / width).cos());
+                let n = self.prng.next_f32();
+                self.click_bpf.process(n) * env * self.click_vol
+            } else { 0.0 }
         } else { 0.0 };
 
-        // ── Tactile bump (tactile: second filtered burst at t≈3ms) ────────────
-        // For tactile switches the modal resonance IS the bump feel in sound
+        let mut out = thock + clack + modal_tail + click;
 
-        let mut out = impact + modal + friction + click;
-
-        // ── Output LPF: removes harshness above ~5kHz ─────────────────────────
-        out = self.output_lpf.process(out);
-
-        // ── DC removal ────────────────────────────────────────────────────────
-        out = self.dc_hpf.process(out);
-
-        // ── Foam saturation: subtle warmth, very low drive ────────────────────
-        if self.foam_sat > 0.01 {
-            out = soft_clip(out * (1.0 + self.foam_sat)) / (1.0 + self.foam_sat);
+        // Filter presence and apply keyup highpass if applicable
+        out = self.presence_lpf.process(out);
+        if let Some(hpf) = &mut self.topout_hpf {
+            out = hpf.process(out);
         }
 
-        Some(out * 0.85)
+        // 6. Anti-pop release fade-out at end of buffer
+        let rem = self.total - cur;
+        if rem < self.fade_len {
+            out *= rem as f32 / self.fade_len as f32;
+        }
+
+        // 7. Bounded algebraic soft limiter
+        Some(soft_limit(out * 1.25))
     }
 }
 
@@ -394,7 +372,6 @@ impl Source for ProceduralSwitch {
         Some(Duration::from_millis((self.total * 1000 / self.sr as u64) as u64))
     }
 }
-
 
 // ─── ASMR Engine ──────────────────────────────────────────────────────────────
 use std::sync::atomic::AtomicU32;
@@ -410,4 +387,3 @@ pub static ASMR_WIND_VOL: AtomicU32 = AtomicU32::new(40);
 pub static ASMR_THUNDER_FREQ: AtomicU32 = AtomicU32::new(50);
 pub static ASMR_THUNDER_INT: AtomicU32 = AtomicU32::new(70);
 pub static ASMR_THUNDER_VOL: AtomicU32 = AtomicU32::new(80);
-

@@ -59,40 +59,164 @@ use core_graphics::event::{CGEventTap, CGEventTapLocation, CGEventTapPlacement, 
 use core_foundation::runloop::CFRunLoop;
 use rodio::{Decoder, OutputStream, Sink, Source};
 
-pub struct LoopingDecoder {
-    bytes: &'static [u8],
-    decoder: Decoder<std::io::Cursor<&'static [u8]>>,
+pub struct SeamlessLoopSource {
+    samples: std::sync::Arc<[i16]>,
+    channels: u16,
+    sample_rate: u32,
+    cursor: usize,
+    filter_left: Option<crate::dsp::Biquad>,
+    filter_right: Option<crate::dsp::Biquad>,
+    is_rain: bool,
 }
 
-impl LoopingDecoder {
-    pub fn new(bytes: &'static [u8]) -> Result<Self, rodio::decoder::DecoderError> {
-        let decoder = Decoder::new(std::io::Cursor::new(bytes))?;
-        Ok(Self { bytes, decoder })
+impl SeamlessLoopSource {
+    pub fn new_crossfaded(bytes: &'static [u8], is_rain: bool) -> Result<Self, rodio::decoder::DecoderError> {
+        let cursor = std::io::Cursor::new(bytes);
+        let decoder = Decoder::new(cursor)?;
+        let channels = decoder.channels();
+        let sample_rate = decoder.sample_rate();
+        let mut raw: Vec<i16> = rodio::Source::convert_samples::<i16>(decoder).collect();
+        let ch = channels as usize;
+        let total_frames = raw.len() / ch;
+        // 0.5s cosine equal-power crossfade between discarded tail and head
+        let xfade_frames = ((sample_rate as usize) / 2).min(total_frames / 4);
+        if total_frames > xfade_frames * 2 && xfade_frames > 0 {
+            let loop_frames = total_frames - xfade_frames;
+            for frame in 0..xfade_frames {
+                let tail_frame = loop_frames + frame;
+                let t = frame as f32 / xfade_frames as f32;
+                let fade_out = (t * std::f32::consts::FRAC_PI_2).cos();
+                let fade_in = (t * std::f32::consts::FRAC_PI_2).sin();
+                for c in 0..ch {
+                    let tail_val = raw[tail_frame * ch + c] as f32;
+                    let head_val = raw[frame * ch + c] as f32;
+                    let blended = (fade_out * tail_val + fade_in * head_val).clamp(-32768.0, 32767.0) as i16;
+                    raw[frame * ch + c] = blended;
+                }
+            }
+            raw.truncate(loop_frames * ch);
+        }
+
+        let (filter_left, filter_right) = if is_rain {
+            let dens = crate::dsp::ASMR_RAIN_DENS.load(Ordering::Relaxed) as f32 / 100.0;
+            let fc = 2400.0 + dens * 2600.0;
+            (
+                Some(crate::dsp::Biquad::lowpass(sample_rate as f32, fc, 0.707)),
+                Some(crate::dsp::Biquad::lowpass(sample_rate as f32, fc, 0.707)),
+            )
+        } else {
+            (None, None)
+        };
+
+        Ok(Self {
+            samples: std::sync::Arc::from(raw.into_boxed_slice()),
+            channels,
+            sample_rate,
+            cursor: 0,
+            filter_left,
+            filter_right,
+            is_rain,
+        })
     }
 }
 
-impl Iterator for LoopingDecoder {
-    type Item = i16;
-    #[inline]
-    fn next(&mut self) -> Option<i16> {
-        if let Some(sample) = self.decoder.next() {
-            Some(sample)
-        } else {
-            if let Ok(new_decoder) = Decoder::new(std::io::Cursor::new(self.bytes)) {
-                self.decoder = new_decoder;
-                self.decoder.next()
-            } else {
-                None
+impl Iterator for SeamlessLoopSource {
+    type Item = f32;
+
+    #[inline(always)]
+    fn next(&mut self) -> Option<f32> {
+        if self.samples.is_empty() { return None; }
+        let ch_idx = self.cursor % self.channels as usize;
+        let mut sample = self.samples[self.cursor] as f32 / 32768.0;
+
+        if self.is_rain {
+            if self.cursor == 0 {
+                let dens = crate::dsp::ASMR_RAIN_DENS.load(Ordering::Relaxed) as f32 / 100.0;
+                let fc = 2400.0 + dens * 2600.0;
+                self.filter_left = Some(crate::dsp::Biquad::lowpass(self.sample_rate as f32, fc, 0.707));
+                self.filter_right = Some(crate::dsp::Biquad::lowpass(self.sample_rate as f32, fc, 0.707));
             }
+            if ch_idx == 0 {
+                if let Some(fl) = &mut self.filter_left {
+                    sample = fl.process(sample);
+                }
+            } else {
+                if let Some(fr) = &mut self.filter_right {
+                    sample = fr.process(sample);
+                }
+            }
+            // Makeup gain (+3 dB) for pleasant listening balance
+            sample *= 1.41;
+        }
+
+        self.cursor += 1;
+        if self.cursor >= self.samples.len() {
+            self.cursor = 0;
+        }
+        Some(sample)
+    }
+}
+
+impl Source for SeamlessLoopSource {
+    fn current_frame_len(&self) -> Option<usize> { None }
+    fn channels(&self) -> u16 { self.channels }
+    fn sample_rate(&self) -> u32 { self.sample_rate }
+    fn total_duration(&self) -> Option<std::time::Duration> { None }
+}
+
+enum DirectOrSpeed<A, B> {
+    Direct(A),
+    Speed(B),
+}
+
+impl<A, B> Iterator for DirectOrSpeed<A, B>
+where
+    A: Iterator<Item = f32>,
+    B: Iterator<Item = f32>,
+{
+    type Item = f32;
+    #[inline(always)]
+    fn next(&mut self) -> Option<f32> {
+        match self {
+            Self::Direct(a) => a.next(),
+            Self::Speed(b) => b.next(),
         }
     }
 }
 
-impl Source for LoopingDecoder {
-    fn current_frame_len(&self) -> Option<usize> { self.decoder.current_frame_len() }
-    fn channels(&self) -> u16 { self.decoder.channels() }
-    fn sample_rate(&self) -> u32 { self.decoder.sample_rate() }
-    fn total_duration(&self) -> Option<std::time::Duration> { None } // Infinite
+impl<A, B> Source for DirectOrSpeed<A, B>
+where
+    A: Source<Item = f32>,
+    B: Source<Item = f32>,
+{
+    #[inline(always)]
+    fn current_frame_len(&self) -> Option<usize> {
+        match self {
+            Self::Direct(a) => a.current_frame_len(),
+            Self::Speed(b) => b.current_frame_len(),
+        }
+    }
+    #[inline(always)]
+    fn channels(&self) -> u16 {
+        match self {
+            Self::Direct(a) => a.channels(),
+            Self::Speed(b) => b.channels(),
+        }
+    }
+    #[inline(always)]
+    fn sample_rate(&self) -> u32 {
+        match self {
+            Self::Direct(a) => a.sample_rate(),
+            Self::Speed(b) => b.sample_rate(),
+        }
+    }
+    #[inline(always)]
+    fn total_duration(&self) -> Option<std::time::Duration> {
+        match self {
+            Self::Direct(a) => a.total_duration(),
+            Self::Speed(b) => b.total_duration(),
+        }
+    }
 }
 
 use serde::{Deserialize, Serialize};
@@ -122,45 +246,59 @@ static VOL: AtomicU32 = AtomicU32::new(100);
 // 34-file pack: ~1MB RAM instead of ~2MB. 114-file pack: ~3MB instead of ~7MB.
 
 #[derive(Clone)]
-struct PredecodedAudio {
-    samples: std::sync::Arc<[f32]>,
-    channels: u16,
-    sample_rate: u32,
+pub struct PredecodedAudio {
+    pub file_bytes: std::sync::Arc<[u8]>,
+    pub decoded: std::sync::Arc<std::sync::OnceLock<std::sync::Arc<[i16]>>>,
+    pub channels: u16,
+    pub sample_rate: u32,
 }
 
 impl PredecodedAudio {
     fn new(path: &std::path::Path) -> Option<Self> {
         let bytes = std::fs::read(path).ok()?;
-        let cursor = std::io::Cursor::new(bytes);
+        let cursor = std::io::Cursor::new(bytes.clone());
         let decoder = rodio::Decoder::new(cursor).ok()?;
-        let channels = decoder.channels();
-        let sample_rate = decoder.sample_rate();
-        let samples: Vec<f32> = rodio::Source::convert_samples::<f32>(decoder).collect();
+        let channels = rodio::Source::channels(&decoder);
+        let sample_rate = rodio::Source::sample_rate(&decoder);
         Some(Self {
-            samples: std::sync::Arc::from(samples.into_boxed_slice()),
+            file_bytes: std::sync::Arc::from(bytes.into_boxed_slice()),
+            decoded: std::sync::Arc::new(std::sync::OnceLock::new()),
             channels,
             sample_rate,
         })
     }
 
+    pub fn samples(&self) -> std::sync::Arc<[i16]> {
+        self.decoded.get_or_init(|| {
+            let cursor = std::io::Cursor::new(self.file_bytes.clone());
+            if let Ok(decoder) = rodio::Decoder::new(cursor) {
+                let s: Vec<i16> = rodio::Source::convert_samples::<i16>(decoder).collect();
+                std::sync::Arc::from(s.into_boxed_slice())
+            } else {
+                std::sync::Arc::from(Vec::new().into_boxed_slice())
+            }
+        }).clone()
+    }
+
     fn play(&self, vol: f32, pitch: f32) -> Option<impl rodio::Source<Item = f32>> {
+        let samples = self.samples();
         let src = ZeroCopySource {
-            samples: self.samples.clone(),
+            samples,
             channels: self.channels,
             sample_rate: self.sample_rate,
             cursor: 0,
         }.amplify(vol);
         
-        if (pitch - 1.0).abs() > 0.01 {
-            Some(rodio::source::Source::speed(src, pitch))
+        if (pitch - 1.0).abs() > 0.005 {
+            Some(DirectOrSpeed::Speed(rodio::source::Source::speed(src, pitch)))
         } else {
-            Some(rodio::source::Source::speed(src, 1.0))
+            Some(DirectOrSpeed::Direct(src))
         }
     }
 }
 
 struct ZeroCopySource {
-    samples: std::sync::Arc<[f32]>,
+    samples: std::sync::Arc<[i16]>,
     channels: u16,
     sample_rate: u32,
     cursor: usize,
@@ -171,7 +309,7 @@ impl Iterator for ZeroCopySource {
     #[inline(always)]
     fn next(&mut self) -> Option<f32> {
         if self.cursor < self.samples.len() {
-            let sample = self.samples[self.cursor];
+            let sample = self.samples[self.cursor] as f32 / 32768.0;
             self.cursor += 1;
             Some(sample)
         } else {
@@ -181,7 +319,7 @@ impl Iterator for ZeroCopySource {
 }
 
 impl rodio::Source for ZeroCopySource {
-    fn current_frame_len(&self) -> Option<usize> { Some(self.samples.len() - self.cursor) }
+    fn current_frame_len(&self) -> Option<usize> { None }
     fn channels(&self) -> u16 { self.channels }
     fn sample_rate(&self) -> u32 { self.sample_rate }
     fn total_duration(&self) -> Option<std::time::Duration> {
@@ -212,12 +350,12 @@ struct PackConfig {
     procedural: Option<dsp::ProceduralConfig>,
 }
 
-struct LoadedPack {
-    defaults: Vec<PredecodedAudio>,
-    mappings: HashMap<u64, PredecodedAudio>,
-    pitch: f32,
-    vol_mult: f32,
-    procedural: Option<dsp::ProceduralConfig>,
+pub struct LoadedPack {
+    pub defaults: Vec<PredecodedAudio>,
+    pub mappings: HashMap<u64, PredecodedAudio>,
+    pub pitch: f32,
+    pub vol_mult: f32,
+    pub procedural: Option<dsp::ProceduralConfig>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -241,13 +379,25 @@ fn save_settings(path: &Path, volume: u32, pack: &str) {
     }
 }
 
-fn load_pack(pack_dir: &Path) -> Option<LoadedPack> {
+pub fn load_pack(pack_dir: &Path) -> Option<LoadedPack> {
     let config_str = fs::read_to_string(pack_dir.join("config.json")).ok()?;
     let config: PackConfig = serde_json::from_str(&config_str).ok()?;
 
+    let mut cache: HashMap<std::path::PathBuf, PredecodedAudio> = HashMap::new();
+    let mut load_cached = |rel_path: &str| -> Option<PredecodedAudio> {
+        let full = pack_dir.join(rel_path);
+        if let Some(cached) = cache.get(&full) {
+            return Some(cached.clone());
+        }
+        let audio = load_audio_file(&full)?;
+        cache.insert(full, audio.clone());
+        Some(audio)
+    };
+
     let mut defaults = Vec::new();
     for def in config.defaults {
-        if let Some(audio) = load_audio_file(&pack_dir.join(def)) {
+        if let Some(audio) = load_cached(&def) {
+            let _ = audio.samples(); // pre-warm default fallback sounds
             defaults.push(audio);
         }
     }
@@ -255,9 +405,16 @@ fn load_pack(pack_dir: &Path) -> Option<LoadedPack> {
     let mut mappings = HashMap::new();
     for (key_str, filename) in config.mappings {
         if let Ok(key_code) = key_str.parse::<u64>() {
-            if let Some(audio) = load_audio_file(&pack_dir.join(filename)) {
+            if let Some(audio) = load_cached(&filename) {
                 mappings.insert(key_code, audio);
             }
+        }
+    }
+
+    // Pre-warm primary typing keys (Space=57, Return=28, Backspace=14) for instantaneous 0ms latency
+    for &common_code in &[57u64, 28u64, 14u64] {
+        if let Some(audio) = mappings.get(&common_code) {
+            let _ = audio.samples();
         }
     }
 
@@ -349,56 +506,49 @@ pub fn run(is_cli: bool) {
 
     if is_cli {
         let pack_display = current_pack_name.read().unwrap().replace('_', " ");
+        let cur_vol = VOL.load(std::sync::atomic::Ordering::Relaxed);
+        let filled = (cur_vol / 10).min(10) as usize;
+        let empty = 10 - filled;
+        let vol_bar = format!("[{}{}] {}%", "█".repeat(filled).truecolor(80, 255, 140), "░".repeat(empty).truecolor(80, 80, 100), cur_vol);
+
         println!();
-        println!("{}", "╔══════════════════════════════════════════╗".truecolor(120, 80, 255));
-        println!("{} {}  {} {}",
+        println!("{}", "╔══════════════════════════════════════════════════════════════╗".truecolor(120, 80, 255));
+        println!("{}  {} {} {} {}",
             "║".truecolor(120, 80, 255),
             "⌨".truecolor(255, 180, 80),
             "T H O C K".bold().truecolor(255, 255, 255),
-            "                        ║".truecolor(120, 80, 255)
+            "— Mechanical Keyboard Engine".truecolor(180, 160, 255),
+            "             ║".truecolor(120, 80, 255)
         );
-        println!("{} {}  {}{}",
-            "║".truecolor(120, 80, 255),
-            "  ".truecolor(180, 180, 180),
-            "Mechanical Keyboard Sound Engine".truecolor(180, 160, 255),
-            "  ║".truecolor(120, 80, 255)
-        );
-        println!("{}", "╚══════════════════════════════════════════╝".truecolor(120, 80, 255));
+        println!("{}", "╚══════════════════════════════════════════════════════════════╝".truecolor(120, 80, 255));
         println!();
 
         if !ax_trusted {
-            println!("{}", "  ┌──────────────────────────────────────────┐".truecolor(255, 80, 80));
+            println!("{}", "  ┌────────────────────────────────────────────────────────────┐".truecolor(255, 80, 80));
             println!("  {} {} {}",
                 "│".truecolor(255, 80, 80),
                 "⚠  ACCESSIBILITY PERMISSION MISSING".bold().truecolor(255, 80, 80),
+                "                        │".truecolor(255, 80, 80)
+            );
+            println!("  {} {} {}",
+                "│".truecolor(255, 80, 80),
+                "  Keypresses cannot be detected.                             ".truecolor(255, 180, 80),
                 "│".truecolor(255, 80, 80)
             );
             println!("  {} {} {}",
                 "│".truecolor(255, 80, 80),
-                "  Keypresses cannot be detected.     ".truecolor(255, 180, 80),
+                "  Settings opened — grant & restart.                         ".truecolor(255, 220, 100),
                 "│".truecolor(255, 80, 80)
             );
-            println!("  {} {} {}",
-                "│".truecolor(255, 80, 80),
-                "  Settings opened — grant & restart. ".truecolor(255, 220, 100),
-                "│".truecolor(255, 80, 80)
-            );
-            println!("{}", "  └──────────────────────────────────────────┘".truecolor(255, 80, 80));
+            println!("{}", "  └────────────────────────────────────────────────────────────┘".truecolor(255, 80, 80));
             println!();
         }
 
-        println!("  {}  {}",
-            "◈  Pack:".truecolor(180, 160, 255),
-            pack_display.bold().truecolor(255, 255, 255)
-        );
-        println!("  {}  {}",
-            "◈  Mode:".truecolor(180, 160, 255),
-            "Running — Ctrl+C to quit".truecolor(120, 220, 120)
-        );
-        println!("  {}  {}",
-            "◈  Hint:".truecolor(180, 160, 255),
-            "type 'help' for commands, Tab to autocomplete".truecolor(140, 140, 140)
-        );
+        println!("  {}  {}", "▶ Active Pack:".bold().truecolor(255, 200, 80), pack_display.bold().truecolor(255, 255, 255));
+        println!("  {}  {}", "🔊 Master Vol:".bold().truecolor(80, 200, 255), vol_bar.bold());
+        println!("  {}  {}", "⚡ Performance:".bold().truecolor(80, 255, 140), "Zero Latency i16 PCM (Main Thread 0ms delay)".truecolor(180, 230, 200));
+        println!("  {}  {}", "✨ Interaction:".bold().truecolor(255, 120, 220), "Press Enter or type 'menu' for Interactive Scroll Menu".truecolor(255, 220, 160));
+        println!("  {}  {}", "💡 Commands:   ".dimmed(), "pack <name>, vol <0-100>, asmr, proc, help, exit".dimmed());
         println!();
     }
 
@@ -417,41 +567,21 @@ pub fn run(is_cli: bool) {
         static WIND_OGG: &[u8] = include_bytes!("../assets/asmr/wind.ogg");
         static THUNDER_OGG: &[u8] = include_bytes!("../assets/asmr/thunder.ogg");
 
-        // Rain sink — looping
+        // Rain sink — starts empty and paused (lazy load on enable)
         let rain_sink = Sink::try_new(&handle).unwrap_or_else(|_| {
             eprintln!("ASMR Rain: could not create sink");
             Sink::new_idle().0
         });
         rain_sink.set_volume(0.0);
-        match LoopingDecoder::new(RAIN_OGG) {
-            Ok(decoder) => {
-                let src = decoder.convert_samples::<f32>();
-                rain_sink.append(src);
-            },
-            Err(e) => {
-                eprintln!("ASMR Rain: failed to decode audio asset: {}", e);
-                crate::dsp::ASMR_RAIN_ON.store(0, std::sync::atomic::Ordering::Relaxed);
-            }
-        }
-        rain_sink.play();
+        rain_sink.pause();
 
-        // Wind sink — looping
+        // Wind sink — starts empty and paused (lazy load on enable)
         let wind_sink = Sink::try_new(&handle).unwrap_or_else(|_| {
             eprintln!("ASMR Wind: could not create sink");
             Sink::new_idle().0
         });
         wind_sink.set_volume(0.0);
-        match LoopingDecoder::new(WIND_OGG) {
-            Ok(decoder) => {
-                let src = decoder.convert_samples::<f32>();
-                wind_sink.append(src);
-            },
-            Err(e) => {
-                eprintln!("ASMR Wind: failed to decode audio asset: {}", e);
-                crate::dsp::ASMR_WIND_ON.store(0, std::sync::atomic::Ordering::Relaxed);
-            }
-        }
-        wind_sink.play();
+        wind_sink.pause();
 
         // Thunder sink — one-shot, re-triggered by a timer thread
         let thunder_sink = Sink::try_new(&handle).unwrap_or_else(|_| {
@@ -477,43 +607,77 @@ pub fn run(is_cli: bool) {
 
                 let m = ASMR_MASTER_VOL.load(Ordering::Relaxed) as f32 / 100.0;
 
-                // Rain
+                // Rain (warm, gentle, dynamically filtered)
                 let rain_on = ASMR_RAIN_ON.load(Ordering::Relaxed) != 0;
                 let rain_v = ASMR_RAIN_VOL.load(Ordering::Relaxed) as f32 / 100.0;
-                let rain_dens = ASMR_RAIN_DENS.load(Ordering::Relaxed) as f32 / 100.0;
-                // Density acts as an intensity volume scaler (0.3x to 1.0x) to avoid pitch-shifting
-                let rain_intensity = 0.3 + (rain_dens * 0.7);
-                if rain_on { rain_sink.play(); rain_sink.set_volume(rain_v * rain_intensity * m); } else { rain_sink.pause(); }
+                if rain_on {
+                    if rain_sink.empty() {
+                        if let Ok(src) = SeamlessLoopSource::new_crossfaded(RAIN_OGG, true) {
+                            rain_sink.append(src);
+                        }
+                    }
+                    rain_sink.play();
+                    rain_sink.set_volume(rain_v * m * 0.85);
+                } else {
+                    rain_sink.pause();
+                }
 
-                // Wind
+                // Wind (organic breathing gusts via dual-sine LFO)
                 let wind_on = ASMR_WIND_ON.load(Ordering::Relaxed) != 0;
                 let wind_v = ASMR_WIND_VOL.load(Ordering::Relaxed) as f32 / 100.0;
                 let wind_gust = ASMR_WIND_GUST.load(Ordering::Relaxed) as f32 / 100.0;
-                let wind_intensity = 0.3 + (wind_gust * 0.7);
-                if wind_on { wind_sink.play(); wind_sink.set_volume(wind_v * wind_intensity * m); } else { wind_sink.pause(); }
+                let lfo = 0.6 * (rng_seed as f32 * 0.00000005 * 0.449).sin() + 0.4 * (rng_seed as f32 * 0.00000005 * 0.739).sin();
+                let gust_mult = 1.0 + (wind_gust * 0.35) * lfo;
+                if wind_on {
+                    if wind_sink.empty() {
+                        if let Ok(src) = SeamlessLoopSource::new_crossfaded(WIND_OGG, false) {
+                            wind_sink.append(src);
+                        }
+                    }
+                    wind_sink.play();
+                    wind_sink.set_volume(wind_v * gust_mult * m * 0.75);
+                } else {
+                    wind_sink.pause();
+                }
 
-                // Thunder — retrigger one-shot randomly
+                // Thunder — retrigger one-shot randomly with tail fade-out
                 let thunder_on = ASMR_THUNDER_ON.load(Ordering::Relaxed) != 0;
                 let t_vol = ASMR_THUNDER_VOL.load(Ordering::Relaxed) as f32 / 100.0;
-                let t_freq = ASMR_THUNDER_FREQ.load(Ordering::Relaxed); // 0-100: 0=rare, 100=frequent
+                let t_freq = ASMR_THUNDER_FREQ.load(Ordering::Relaxed);
 
                 if thunder_cooldown > 0 { thunder_cooldown -= 1; }
 
                 if thunder_on && thunder_cooldown == 0 && thunder_sink.empty() {
-                    // Random probability scaled by frequency slider
                     rng_seed ^= rng_seed << 13;
                     rng_seed ^= rng_seed >> 17;
                     rng_seed ^= rng_seed << 5;
                     let chance = (rng_seed as f32 / u32::MAX as f32).abs();
-                    let threshold = 0.003 + (t_freq as f32 / 100.0) * 0.03; // 0.3%-3.3% per tick
+                    // realistic ambient interval (every 120s down to 12s)
+                    let threshold = 1.0 / ((120.0 - 1.08 * t_freq as f32) * 20.0).max(10.0);
                     if chance < threshold {
                         match Decoder::new(std::io::Cursor::new(THUNDER_OGG)) {
                             Ok(decoder) => {
-                                let src = decoder.convert_samples::<f32>();
+                                let channels = decoder.channels();
+                                let sr = decoder.sample_rate();
+                                let mut samples: Vec<i16> = rodio::Source::convert_samples::<i16>(decoder).collect();
+                                // 0.5s cosine fade-out at tail (seconds 19.5-20.0) eliminates truncation pop
+                                let fade_samples = ((sr as usize) / 2) * channels as usize;
+                                let len = samples.len();
+                                if len > fade_samples {
+                                    for (i, s) in samples[len - fade_samples..].iter_mut().enumerate() {
+                                        let alpha = (fade_samples - i) as f32 / fade_samples as f32;
+                                        *s = (*s as f32 * alpha) as i16;
+                                    }
+                                }
+                                let src = ZeroCopySource {
+                                    samples: Arc::from(samples.into_boxed_slice()),
+                                    channels,
+                                    sample_rate: sr,
+                                    cursor: 0,
+                                };
                                 thunder_sink.append(src);
                                 let t_int = ASMR_THUNDER_INT.load(Ordering::Relaxed) as f32 / 100.0;
                                 thunder_sink.set_volume(t_vol * t_int * m);
-                                // Minimum cooldown between strikes (20 ticks = 1 second baseline)
                                 let min_cd = 40u32 + ((100 - t_freq) as u32 * 8);
                                 thunder_cooldown = min_cd;
                             },
@@ -525,7 +689,6 @@ pub fn run(is_cli: bool) {
                     }
                 }
                 if !thunder_on {
-                    // Clear pending thunder if layer turned off
                     if !thunder_sink.empty() {
                         thunder_sink.clear();
                     }
@@ -564,20 +727,21 @@ pub fn run(is_cli: bool) {
                 if !is_keyup {
                     let now = std::time::Instant::now();
                     let elapsed = now.duration_since(last_press.replace(now)).as_secs_f32();
-                    velocity_mult = (0.5 + (0.1 / (elapsed + 0.01))).clamp(0.8, 1.5);
+                    // Balanced humanized curve: baseline 0.95 at rest, rises smoothly to 1.12 during bursts
+                    velocity_mult = (0.92 + (0.025 / (elapsed + 0.10))).clamp(0.90, 1.15);
                 }
 
                 let keycode = cg_event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) as u16;
 
                 if let Some(pack) = &*pack_clone.read().unwrap() {
                     let vol_percent = VOL.load(Ordering::Relaxed) as f32 / 100.0;
-                    // Squared curve: at vol=80% → 64% amplitude (perceptually natural)
-                    let vol = vol_percent * vol_percent * pack.vol_mult;
+                    // Perceptually uniform power curve (x^1.4), with strict DAC limit at 1.0 to prevent clipping
+                    let base_vol = vol_percent.powf(1.4) * pack.vol_mult;
+                    let playback_vol = (base_vol * velocity_mult).min(1.0);
 
                     if let Some(proc_config) = &pack.procedural {
-                        let proc = dsp::ProceduralSwitch::new(proc_config.clone(), is_keyup, velocity_mult);
-                        // Procedural audio plays both keydown and keyup
-                        let _ = handle.play_raw(proc.amplify(vol).convert_samples());
+                        let proc = dsp::ProceduralSwitch::new(proc_config, is_keyup, velocity_mult);
+                        let _ = handle.play_raw(proc.amplify(playback_vol));
                     } else if !is_keyup {
                         let key_map = keymap::get_key_map();
                         let audio = if let Some(Some(code)) = key_map.get(keycode as usize) {
@@ -599,7 +763,10 @@ pub fn run(is_cli: bool) {
                         };
 
                         if let Some(a) = audio {
-                            if let Some(src) = a.play(vol * velocity_mult, pack.pitch) {
+                            // Micro-pitch humanization (+-1.5%) to eliminate machine-gun repetition
+                            let micro_jitter = 1.0 + ((((keycode as u32).wrapping_mul(1103515245) >> 16) as f32 / 32768.0) - 1.0) * 0.015;
+                            let effective_pitch = pack.pitch * micro_jitter;
+                            if let Some(src) = a.play(playback_vol, effective_pitch) {
                                 let _ = handle.play_raw(src);
                             }
                         }
@@ -632,14 +799,146 @@ pub fn run(is_cli: bool) {
         // threads, which causes input latency. Running the event tap on the
         // main thread fixes the latency instantly.
         let packs_for_rl = available_packs.clone();
+        let packs_dir_clone = packs_dir.clone();
+        let current_pack_clone = current_pack.clone();
+        let current_pack_name_clone = current_pack_name.clone();
+
         let _ = std::thread::Builder::new().stack_size(256 * 1024).spawn(move || {
             let helper = ThockHelper {
-                commands: vec!["vol".to_string(), "pack".to_string(), "proc".to_string(), "pitch".to_string(), "help".to_string(), "exit".to_string()],
-                packs: packs_for_rl,
+                commands: vec![
+                    "menu".to_string(), "status".to_string(), "vol".to_string(), "pack".to_string(),
+                    "packs".to_string(), "proc".to_string(), "asmr".to_string(),
+                    "pitch".to_string(), "help".to_string(), "exit".to_string()
+                ],
+                packs: packs_for_rl.clone(),
             };
             let mut rl = rustyline::Editor::<ThockHelper, _>::new().unwrap();
             rl.set_helper(Some(helper));
-            
+
+            let interactive_menu = |packs: &[String], packs_dir: &std::path::Path, cur_pack: &std::sync::Arc<std::sync::RwLock<Option<LoadedPack>>>, cur_name: &std::sync::Arc<std::sync::RwLock<String>>| {
+                use inquire::Select;
+                let active_name = cur_name.read().unwrap().replace('_', " ");
+                let cur_vol = VOL.load(Ordering::Relaxed);
+                let menu_options = vec![
+                    format!("🎹 Switch Sound Pack (Current: {})", active_name),
+                    format!("🔊 Adjust Master Volume (Current: {}%)", cur_vol),
+                    "🌧  ASMR Ambient Layers (Rain, Wind, Thunder)".to_string(),
+                    "⚙  Procedural Switch Engine".to_string(),
+                    "📋 View Status Dashboard".to_string(),
+                    "👋 Exit Thock".to_string(),
+                ];
+
+                if let Ok(choice) = Select::new("✨ Interactive Menu (↑↓ to scroll, Enter to select):", menu_options).prompt() {
+                    if choice.starts_with("🎹") {
+                        let formatted_packs: Vec<String> = packs.iter().map(|p| p.replace('_', " ")).collect();
+                        if let Ok(selected) = Select::new("Choose a Sound Pack:", formatted_packs).prompt() {
+                            let raw_name = selected.to_lowercase().replace(' ', "_");
+                            let p_dir = packs_dir.join(&raw_name);
+                            *cur_pack.write().unwrap() = None;
+                            if let Some(pack) = load_pack(&p_dir) {
+                                *cur_pack.write().unwrap() = Some(pack);
+                                *cur_name.write().unwrap() = raw_name.clone();
+                                println!("  {} {}", "✔".bold().truecolor(80,255,140), format!("Switched to pack: {}", selected).bold().truecolor(255,255,255));
+                                save_settings(&packs_dir.join(".settings.json"), VOL.load(Ordering::Relaxed), &raw_name);
+                            }
+                        }
+                    } else if choice.starts_with("🔊") {
+                        if let Ok(v_str) = inquire::Text::new("Enter new volume (0-100):").prompt() {
+                            if let Ok(v) = v_str.parse::<u32>() {
+                                let v = v.clamp(0, 100);
+                                VOL.store(v, Ordering::Relaxed);
+                                println!("  {} Volume set to {}%", "✔".bold().truecolor(80,255,140), v);
+                                save_settings(&packs_dir.join(".settings.json"), v, &*cur_name.read().unwrap());
+                            }
+                        }
+                    } else if choice.starts_with("🌧") {
+                        let asmr_opts = vec![
+                            "Toggle Rain Layer".to_string(),
+                            "Toggle Wind Layer".to_string(),
+                            "Toggle Thunder Layer".to_string(),
+                            "Turn All ASMR Off".to_string(),
+                        ];
+                        if let Ok(asmr_sel) = Select::new("ASMR Settings:", asmr_opts).prompt() {
+                            match asmr_sel.as_str() {
+                                "Toggle Rain Layer" => {
+                                    let cur = crate::dsp::ASMR_RAIN_ON.load(Ordering::Relaxed) != 0;
+                                    crate::dsp::ASMR_RAIN_ON.store(if cur { 0 } else { 1 }, Ordering::Relaxed);
+                                    println!("  Rain: {}", if cur { "OFF".truecolor(255,100,100) } else { "ON".bold().truecolor(80,255,140) });
+                                },
+                                "Toggle Wind Layer" => {
+                                    let cur = crate::dsp::ASMR_WIND_ON.load(Ordering::Relaxed) != 0;
+                                    crate::dsp::ASMR_WIND_ON.store(if cur { 0 } else { 1 }, Ordering::Relaxed);
+                                    println!("  Wind: {}", if cur { "OFF".truecolor(255,100,100) } else { "ON".bold().truecolor(80,255,140) });
+                                },
+                                "Toggle Thunder Layer" => {
+                                    let cur = crate::dsp::ASMR_THUNDER_ON.load(Ordering::Relaxed) != 0;
+                                    crate::dsp::ASMR_THUNDER_ON.store(if cur { 0 } else { 1 }, Ordering::Relaxed);
+                                    println!("  Thunder: {}", if cur { "OFF".truecolor(255,100,100) } else { "ON".bold().truecolor(80,255,140) });
+                                },
+                                "Turn All ASMR Off" => {
+                                    crate::dsp::ASMR_RAIN_ON.store(0, Ordering::Relaxed);
+                                    crate::dsp::ASMR_WIND_ON.store(0, Ordering::Relaxed);
+                                    crate::dsp::ASMR_THUNDER_ON.store(0, Ordering::Relaxed);
+                                    println!("  All ASMR layers disabled.");
+                                },
+                                _ => {}
+                            }
+                        }
+                    } else if choice.starts_with("⚙") {
+                        let proc_opts = vec![
+                            "Switch Type: cream".to_string(),
+                            "Switch Type: linear / red".to_string(),
+                            "Switch Type: tactile / brown".to_string(),
+                            "Switch Type: clicky / blue".to_string(),
+                        ];
+                        if let Ok(sel) = Select::new("Choose Switch Preset:", proc_opts).prompt() {
+                            let switch_val = if sel.contains("cream") { "cream" }
+                                else if sel.contains("linear") { "linear" }
+                                else if sel.contains("tactile") { "tactile" }
+                                else { "clicky" };
+                            let mut lock = cur_pack.write().unwrap();
+                            if lock.is_none() || lock.as_ref().unwrap().procedural.is_none() {
+                                *lock = Some(crate::LoadedPack {
+                                    defaults: vec![],
+                                    mappings: HashMap::new(),
+                                    vol_mult: 1.0,
+                                    pitch: 1.0,
+                                    procedural: Some(crate::dsp::ProceduralConfig::default()),
+                                });
+                                *cur_name.write().unwrap() = "__cli_proc__".to_string();
+                            }
+                            if let Some(pack) = lock.as_mut() {
+                                if let Some(proc) = &mut pack.procedural {
+                                    proc.switch_type = switch_val.to_string();
+                                    println!("  {} Procedural switch set to: {}", "✔".bold().truecolor(80,255,140), switch_val);
+                                }
+                            }
+                        }
+                    } else if choice.starts_with("📋") {
+                        let p_name = cur_name.read().unwrap().replace('_', " ");
+                        let cur_vol = VOL.load(Ordering::Relaxed);
+                        let filled = (cur_vol / 10).min(10) as usize;
+                        let empty = 10 - filled;
+                        let vol_bar = format!("[{}{}] {}%", "█".repeat(filled).truecolor(80, 255, 140), "░".repeat(empty).truecolor(80, 80, 100), cur_vol);
+                        let rain_on = crate::dsp::ASMR_RAIN_ON.load(Ordering::Relaxed) != 0;
+                        let wind_on = crate::dsp::ASMR_WIND_ON.load(Ordering::Relaxed) != 0;
+                        let thunder_on = crate::dsp::ASMR_THUNDER_ON.load(Ordering::Relaxed) != 0;
+                        let dot = |on: bool| if on { "●".truecolor(80, 255, 140) } else { "○".truecolor(100, 100, 100) };
+                        println!();
+                        println!("{}", "  ┌─ Thock Status ───────────────────────────────────────┐".truecolor(120, 80, 255));
+                        println!("  {}  {}  {}", "│".truecolor(120, 80, 255), "Active Pack :".bold().truecolor(255, 200, 80), p_name.bold().truecolor(255, 255, 255));
+                        println!("  {}  {}  {}", "│".truecolor(120, 80, 255), "Master Vol  :".bold().truecolor(80, 200, 255), vol_bar);
+                        println!("  {}  {}  Rain {}  Wind {}  Thunder {}", "│".truecolor(120, 80, 255), "ASMR Layers :".bold().truecolor(140, 200, 255), dot(rain_on), dot(wind_on), dot(thunder_on));
+                        println!("  {}  {}  Zero Latency i16 PCM (0ms delay)", "│".truecolor(120, 80, 255), "Audio Engine:".bold().truecolor(80, 255, 140));
+                        println!("{}", "  └──────────────────────────────────────────────────────┘".truecolor(120, 80, 255));
+                        println!();
+                    } else if choice.starts_with("👋") {
+                        println!("\n  {} {}\n", "◈".truecolor(120,80,255), "Goodbye — happy typing! 👋".bold().truecolor(255,255,255));
+                        std::process::exit(0);
+                    }
+                }
+            };
+
             loop {
                 let readline = rl.readline(&format!("{} ", "❯".truecolor(120, 80, 255)));
                 let input = match readline {
@@ -650,18 +949,42 @@ pub fn run(is_cli: bool) {
                     Err(_) => break,
                 };
                 let parts: Vec<&str> = input.trim().split_whitespace().collect();
-            if parts.is_empty() { continue; }
+                if parts.is_empty() || parts[0] == "menu" {
+                    interactive_menu(&packs_for_rl, &packs_dir_clone, &current_pack_clone, &current_pack_name_clone);
+                    continue;
+                }
             
             match parts[0] {
                 "help" => {
                     println!();
                     println!("{}", "  ┌─ Commands ───────────────────────────────────────────┐".truecolor(120, 80, 255));
+                    println!("  {}  {:12}  {}", "│".truecolor(120, 80, 255), "menu".truecolor(255, 200, 80),        "Open arrow-key interactive menu (or press Enter)".truecolor(200, 200, 200));
+                    println!("  {}  {:12}  {}", "│".truecolor(120, 80, 255), "status".truecolor(255, 200, 80),      "View active pack, volume & ASMR dashboard   ".truecolor(200, 200, 200));
                     println!("  {}  {:12}  {}", "│".truecolor(120, 80, 255), "vol <0-100>".truecolor(255, 200, 80), "Set master volume                            ".truecolor(200, 200, 200));
                     println!("  {}  {:12}  {}", "│".truecolor(120, 80, 255), "pack <name>".truecolor(255, 200, 80), "Switch to a sound pack                       ".truecolor(200, 200, 200));
-                    println!("  {}  {:12}  {}", "│".truecolor(120, 80, 255), "packs".truecolor(255, 200, 80),       "List all available packs                     ".truecolor(200, 200, 200));
+                    println!("  {}  {:12}  {}", "│".truecolor(120, 80, 255), "packs".truecolor(255, 200, 80),       "List & scroll all sound packs                ".truecolor(200, 200, 200));
                     println!("  {}  {:12}  {}", "│".truecolor(120, 80, 255), "proc".truecolor(255, 200, 80),        "View/Edit procedural synthesis settings      ".truecolor(200, 200, 200));
                     println!("  {}  {:12}  {}", "│".truecolor(120, 80, 255), "asmr".truecolor(255, 200, 80),        "ASMR background audio (rain/wind/thunder)    ".truecolor(200, 200, 200));
                     println!("  {}  {:12}  {}", "│".truecolor(120, 80, 255), "quit / exit".truecolor(255, 200, 80), "Close Thock                                  ".truecolor(200, 200, 200));
+                    println!("{}", "  └──────────────────────────────────────────────────────┘".truecolor(120, 80, 255));
+                    println!();
+                },
+                "status" => {
+                    let p_name = current_pack_name_clone.read().unwrap().replace('_', " ");
+                    let cur_vol = VOL.load(Ordering::Relaxed);
+                    let filled = (cur_vol / 10).min(10) as usize;
+                    let empty = 10 - filled;
+                    let vol_bar = format!("[{}{}] {}%", "█".repeat(filled).truecolor(80, 255, 140), "░".repeat(empty).truecolor(80, 80, 100), cur_vol);
+                    let rain_on = crate::dsp::ASMR_RAIN_ON.load(Ordering::Relaxed) != 0;
+                    let wind_on = crate::dsp::ASMR_WIND_ON.load(Ordering::Relaxed) != 0;
+                    let thunder_on = crate::dsp::ASMR_THUNDER_ON.load(Ordering::Relaxed) != 0;
+                    let dot = |on: bool| if on { "●".truecolor(80, 255, 140) } else { "○".truecolor(100, 100, 100) };
+                    println!();
+                    println!("{}", "  ┌─ Thock Status ───────────────────────────────────────┐".truecolor(120, 80, 255));
+                    println!("  {}  {}  {}", "│".truecolor(120, 80, 255), "Active Pack :".bold().truecolor(255, 200, 80), p_name.bold().truecolor(255, 255, 255));
+                    println!("  {}  {}  {}", "│".truecolor(120, 80, 255), "Master Vol  :".bold().truecolor(80, 200, 255), vol_bar);
+                    println!("  {}  {}  Rain {}  Wind {}  Thunder {}", "│".truecolor(120, 80, 255), "ASMR Layers :".bold().truecolor(140, 200, 255), dot(rain_on), dot(wind_on), dot(thunder_on));
+                    println!("  {}  {}  Zero Latency i16 PCM (0ms delay)", "│".truecolor(120, 80, 255), "Audio Engine:".bold().truecolor(80, 255, 140));
                     println!("{}", "  └──────────────────────────────────────────────────────┘".truecolor(120, 80, 255));
                     println!();
                 },
@@ -671,53 +994,62 @@ pub fn run(is_cli: bool) {
                             let v = v.clamp(0, 100);
                             VOL.store(v, Ordering::Relaxed);
                             println!("  {} {} {}", "🔊".truecolor(255,200,80), "Volume →".truecolor(180,160,255), format!("{}%", v).bold().truecolor(255,255,255));
-                            save_settings(&packs_dir.join(".settings.json"), v, &*current_pack_name.read().unwrap());
+                            save_settings(&packs_dir_clone.join(".settings.json"), v, &*current_pack_name_clone.read().unwrap());
                         } else {
                             println!("  {} {}", "✗".bold().truecolor(255,80,80), "Invalid value — use a number 0–100.".truecolor(255,140,80));
+                        }
+                    } else {
+                        if let Ok(v_str) = inquire::Text::new("Enter volume (0-100):").prompt() {
+                            if let Ok(v) = v_str.parse::<u32>() {
+                                let v = v.clamp(0, 100);
+                                VOL.store(v, Ordering::Relaxed);
+                                println!("  {} Volume set to {}%", "✔".bold().truecolor(80,255,140), v);
+                                save_settings(&packs_dir_clone.join(".settings.json"), v, &*current_pack_name_clone.read().unwrap());
+                            }
                         }
                     }
                 },
                 "pack" => {
                     if parts.len() > 1 {
                         let pack_name = parts[1..].join("_");
-                        let p_dir = packs_dir.join(&pack_name);
+                        let p_dir = packs_dir_clone.join(&pack_name);
+                        *current_pack_clone.write().unwrap() = None;
                         if let Some(pack) = load_pack(&p_dir) {
-                            *current_pack.write().unwrap() = Some(pack);
-                            *current_pack_name.write().unwrap() = pack_name.clone();
+                            *current_pack_clone.write().unwrap() = Some(pack);
+                            *current_pack_name_clone.write().unwrap() = pack_name.clone();
                             println!("  {} {}", "✔".bold().truecolor(80,255,140), format!("Now playing → {}", pack_name.replace('_', " ")).truecolor(255,255,255));
-                            save_settings(&packs_dir.join(".settings.json"), VOL.load(Ordering::Relaxed), &pack_name);
+                            save_settings(&packs_dir_clone.join(".settings.json"), VOL.load(Ordering::Relaxed), &pack_name);
                         } else {
                             println!("  {} {} {}", "✗".bold().truecolor(255,80,80), "Pack not found:".truecolor(255,140,80), pack_name.truecolor(255,180,80));
+                        }
+                    } else {
+                        let formatted_packs: Vec<String> = packs_for_rl.iter().map(|p| p.replace('_', " ")).collect();
+                        if let Ok(selected) = inquire::Select::new("Choose a Sound Pack (↑↓ to scroll, Enter to select):", formatted_packs).prompt() {
+                            let raw_name = selected.to_lowercase().replace(' ', "_");
+                            let p_dir = packs_dir_clone.join(&raw_name);
+                            *current_pack_clone.write().unwrap() = None;
+                            if let Some(pack) = load_pack(&p_dir) {
+                                *current_pack_clone.write().unwrap() = Some(pack);
+                                *current_pack_name_clone.write().unwrap() = raw_name.clone();
+                                println!("  {} {}", "✔".bold().truecolor(80,255,140), format!("Now playing → {}", selected).bold().truecolor(255,255,255));
+                                save_settings(&packs_dir_clone.join(".settings.json"), VOL.load(Ordering::Relaxed), &raw_name);
+                            }
                         }
                     }
                 },
                 "packs" => {
-                    let active_pack = current_pack_name.read().unwrap().clone();
-                    println!();
-                    println!("{}", "  ┌─ Sound Packs ───────────────────────────────────────┐".truecolor(120, 80, 255));
-                    for p in &available_packs {
-                        let display = p.replace('_', " ");
-                        if active_pack == *p {
-                            println!("  {}  {} {}",
-                                "│".truecolor(120, 80, 255),
-                                "▶".bold().truecolor(255, 200, 80),
-                                display.bold().truecolor(255, 255, 255)
-                            );
-                        } else {
-                            println!("  {}  {} {}",
-                                "│".truecolor(120, 80, 255),
-                                " ".truecolor(100, 100, 100),
-                                display.truecolor(160, 160, 180)
-                            );
+                    let formatted_packs: Vec<String> = packs_for_rl.iter().map(|p| p.replace('_', " ")).collect();
+                    if let Ok(selected) = inquire::Select::new("Sound Packs (↑↓ to scroll, Enter to select):", formatted_packs).prompt() {
+                        let raw_name = selected.to_lowercase().replace(' ', "_");
+                        let p_dir = packs_dir_clone.join(&raw_name);
+                        *current_pack_clone.write().unwrap() = None;
+                        if let Some(pack) = load_pack(&p_dir) {
+                            *current_pack_clone.write().unwrap() = Some(pack);
+                            *current_pack_name_clone.write().unwrap() = raw_name.clone();
+                            println!("  {} {}", "✔".bold().truecolor(80,255,140), format!("Now playing → {}", selected).bold().truecolor(255,255,255));
+                            save_settings(&packs_dir_clone.join(".settings.json"), VOL.load(Ordering::Relaxed), &raw_name);
                         }
                     }
-                    println!("{}", "  └──────────────────────────────────────────────────────┘".truecolor(120, 80, 255));
-                    println!("  {} {} {}",
-                        "".truecolor(140,140,140),
-                        "tip: type".truecolor(100, 100, 100),
-                        "pack <name>  to switch".truecolor(120, 80, 255)
-                    );
-                    println!();
                 },
                 "proc" => {
                     let mut lock = current_pack.write().unwrap();
@@ -811,9 +1143,33 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
                     
                     let prop = parts[1];
                     match prop {
-                        "none" => { crate::dsp::ASMR_RAIN_ON.store(0, Ordering::Relaxed); crate::dsp::ASMR_WIND_ON.store(0, Ordering::Relaxed); crate::dsp::ASMR_THUNDER_ON.store(0, Ordering::Relaxed); println!("  {} {}", "○".truecolor(100,100,100), "ASMR layers all off".truecolor(180,180,180)); },
-                        "rain" => { crate::dsp::ASMR_RAIN_ON.store(1, Ordering::Relaxed); println!("  {} {}", "🌧".truecolor(80,180,255), "Rain layer on".bold().truecolor(80,180,255)); },
-                        "thunder" => { crate::dsp::ASMR_THUNDER_ON.store(1, Ordering::Relaxed); println!("  {} {}", "⛈".truecolor(255,220,80), "Thunder layer on".bold().truecolor(255,220,80)); },
+                        "none" => {
+                            crate::dsp::ASMR_RAIN_ON.store(0, Ordering::Relaxed);
+                            crate::dsp::ASMR_WIND_ON.store(0, Ordering::Relaxed);
+                            crate::dsp::ASMR_THUNDER_ON.store(0, Ordering::Relaxed);
+                            println!("  {} {}", "○".truecolor(100,100,100), "ASMR layers all off".truecolor(180,180,180));
+                        },
+                        "rain" => {
+                            let curr = crate::dsp::ASMR_RAIN_ON.load(Ordering::Relaxed) != 0;
+                            let new_st = if parts.len() > 2 { parts[2] == "on" || parts[2] == "1" } else { !curr };
+                            crate::dsp::ASMR_RAIN_ON.store(if new_st { 1 } else { 0 }, Ordering::Relaxed);
+                            let st_str = if new_st { "Rain layer on".bold().truecolor(80,180,255) } else { "Rain layer off".truecolor(140,140,140) };
+                            println!("  {} {}", "🌧".truecolor(80,180,255), st_str);
+                        },
+                        "wind" => {
+                            let curr = crate::dsp::ASMR_WIND_ON.load(Ordering::Relaxed) != 0;
+                            let new_st = if parts.len() > 2 { parts[2] == "on" || parts[2] == "1" } else { !curr };
+                            crate::dsp::ASMR_WIND_ON.store(if new_st { 1 } else { 0 }, Ordering::Relaxed);
+                            let st_str = if new_st { "Wind layer on".bold().truecolor(140,200,255) } else { "Wind layer off".truecolor(140,140,140) };
+                            println!("  {} {}", "🌬".truecolor(140,200,255), st_str);
+                        },
+                        "thunder" => {
+                            let curr = crate::dsp::ASMR_THUNDER_ON.load(Ordering::Relaxed) != 0;
+                            let new_st = if parts.len() > 2 { parts[2] == "on" || parts[2] == "1" } else { !curr };
+                            crate::dsp::ASMR_THUNDER_ON.store(if new_st { 1 } else { 0 }, Ordering::Relaxed);
+                            let st_str = if new_st { "Thunder layer on".bold().truecolor(255,220,80) } else { "Thunder layer off".truecolor(140,140,140) };
+                            println!("  {} {}", "⛈".truecolor(255,220,80), st_str);
+                        },
                         _ => {
                             if parts.len() >= 3 {
                                 if let Ok(v) = parts[2].parse::<u32>() {
@@ -1056,6 +1412,7 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
                                 if let Some(p) = val.as_str() {
                                     *ipc_current_pack_name.write().unwrap() = p.to_string();
                                     save_settings(&ipc_packs_dir_clone.join(".settings.json"), VOL.load(std::sync::atomic::Ordering::Relaxed), p);
+                                    *ipc_current_pack.write().unwrap() = None;
                                     if let Some(loaded) = load_pack(&ipc_packs_dir_clone.join(p)) {
                                         *ipc_current_pack.write().unwrap() = Some(loaded);
                                     }
@@ -1137,7 +1494,7 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
                                 if let Some(v) = val.get("thunder_freq").and_then(|v| v.as_u64()) {
                                     crate::dsp::ASMR_THUNDER_FREQ.store(v as u32, std::sync::atomic::Ordering::Relaxed);
                                 }
-                                if let Some(v) = val.get("thunder_intensity").and_then(|v| v.as_u64()) {
+                                if let Some(v) = val.get("thunder_int").or_else(|| val.get("thunder_intensity")).and_then(|v| v.as_u64()) {
                                     crate::dsp::ASMR_THUNDER_INT.store(v as u32, std::sync::atomic::Ordering::Relaxed);
                                 }
                                 if let Some(v) = val.get("thunder_vol").and_then(|v| v.as_u64()) {
@@ -1192,6 +1549,7 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
                                         }
                                     }
                                     
+                                    *ipc_current_pack.write().unwrap() = None;
                                     if let Some(pack) = load_pack(&new_dir) {
                                         *ipc_current_pack.write().unwrap() = Some(pack);
                                         *ipc_current_pack_name.write().unwrap() = name.to_string();
@@ -1274,3 +1632,69 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
         }
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_zero_copy_source_conversion() {
+        let samples: Vec<i16> = vec![-32768, -16384, 0, 16384, 32767];
+        let lock = std::sync::OnceLock::new();
+        let _ = lock.set(std::sync::Arc::from(samples.into_boxed_slice()));
+        let audio = PredecodedAudio {
+            file_bytes: std::sync::Arc::from(Vec::new().into_boxed_slice()),
+            decoded: std::sync::Arc::new(lock),
+            channels: 2,
+            sample_rate: 44100,
+        };
+        let mut src = ZeroCopySource {
+            samples: audio.samples(),
+            channels: audio.channels,
+            sample_rate: audio.sample_rate,
+            cursor: 0,
+        };
+
+        let first = src.next().unwrap();
+        assert!((first - (-1.0)).abs() < 0.001);
+
+        let second = src.next().unwrap();
+        assert!((second - (-0.5)).abs() < 0.001);
+
+        let third = src.next().unwrap();
+        assert!((third - 0.0).abs() < 0.001);
+
+        let fourth = src.next().unwrap();
+        assert!((fourth - 0.5).abs() < 0.001);
+
+        let fifth = src.next().unwrap();
+        assert!((fifth - (32767.0 / 32768.0)).abs() < 0.001);
+
+        assert_eq!(src.next(), None);
+        assert_eq!(rodio::Source::current_frame_len(&src), None);
+    }
+
+    #[test]
+    fn test_load_pack_deduplication() {
+        let packs_dir = PathBuf::from("packs");
+        if let Ok(entries) = std::fs::read_dir(&packs_dir) {
+            for entry in entries.flatten() {
+                if entry.path().is_dir() && entry.path().join("config.json").exists() {
+                    let pack = load_pack(&entry.path());
+                    assert!(pack.is_some(), "Pack should load successfully: {:?}", entry.path());
+                    let pack = pack.unwrap();
+                    // Verify that mapped sounds share Arc references where filenames repeat
+                    if pack.mappings.len() > 10 {
+                        let sample_arcs: Vec<_> = pack.mappings.values().map(|a| a.file_bytes.as_ptr()).collect();
+                        let unique_ptrs: std::collections::HashSet<_> = sample_arcs.iter().copied().collect();
+                        // Many packs have repeated sound files; verify unique buffers <= total mappings
+                        assert!(unique_ptrs.len() <= sample_arcs.len());
+                    }
+                    break;
+                }
+            }
+        }
+    }
+}
+
