@@ -1,9 +1,9 @@
 #!/bin/bash
 set -e
 
-echo "⌨️  Welcome to Thock Setup!"
-echo "============================="
-echo "Cloning the latest repository..."
+echo "thock · mechanical keyboard acoustic engine"
+echo "────────────────────────────────────────────"
+echo "Cloning latest repository..."
 git clone https://github.com/Dharmit-Parmar/Thock-for-macOS-.git ~/.thock-source || {
     echo "Updating existing clone..."
     cd ~/.thock-source
@@ -12,10 +12,10 @@ git clone https://github.com/Dharmit-Parmar/Thock-for-macOS-.git ~/.thock-source
 
 cd ~/.thock-source
 
-echo "📦 Compiling Thock (this might take a moment)..."
+echo "Compiling thock..."
 cargo build --release
 
-echo "🚀 Setting up the global 'thock' command..."
+echo "Setting up global 'thock' command..."
 mkdir -p ~/.cargo/bin
 cat << 'SCRIPT' > ~/.cargo/bin/thock
 #!/bin/bash
@@ -24,27 +24,32 @@ cd ~/.thock-source || {
     exit 1
 }
 
+if [ "$1" = "cli" ] || [ "$1" = "1" ]; then
+    exec cargo run --release --bin thock-cli -- "${@:2}"
+elif [ "$1" = "app" ] || [ "$1" = "gui" ] || [ "$1" = "2" ]; then
+    exec cargo run --release --bin thock-app -- "${@:2}"
+fi
+
 echo ""
-echo "⌨️  Thock Menu"
-echo "=================="
-echo "1) CLI Mode (thock-cli) [Recommended - Lightweight]"
-echo "2) GUI App (thock-app)  [Visual]"
+echo "thock · mechanical keyboard acoustic engine"
+echo "────────────────────────────────────────────"
+echo "1  CLI Mode  (terminal interactive)"
+echo "2  GUI App   (desktop floating app)"
 echo ""
-read -p "Enter choice [1 or 2]: " choice
+read -p "choice [1/2]: " choice
 
 case $choice in
     1)
-        cargo run --release --bin thock-cli -- "$@"
+        exec cargo run --release --bin thock-cli -- "$@"
         ;;
     2)
-        cargo run --release --bin thock-app -- "$@"
+        exec cargo run --release --bin thock-app -- "$@"
         ;;
     *)
-        echo "Invalid choice. Exiting."
-        exit 1
+        exit 0
         ;;
 esac
 SCRIPT
 chmod +x ~/.cargo/bin/thock
 
-echo "✅ Setup complete! You can now type 'thock' anywhere in your terminal."
+echo "✓ Setup complete. Run 'thock' from any terminal."

@@ -509,46 +509,38 @@ pub fn run(is_cli: bool) {
         let cur_vol = VOL.load(std::sync::atomic::Ordering::Relaxed);
         let filled = (cur_vol / 10).min(10) as usize;
         let empty = 10 - filled;
-        let vol_bar = format!("[{}{}] {}%", "█".repeat(filled).truecolor(80, 255, 140), "░".repeat(empty).truecolor(80, 80, 100), cur_vol);
+        let vol_bar = format!("[{}{}] {}%", "█".repeat(filled).truecolor(80, 220, 140), "░".repeat(empty).truecolor(70, 70, 85), cur_vol);
 
         println!();
-        println!("{}", "╔══════════════════════════════════════════════════════════════╗".truecolor(120, 80, 255));
-        println!("{}  {} {} {} {}",
-            "║".truecolor(120, 80, 255),
-            "⌨".truecolor(255, 180, 80),
-            "T H O C K".bold().truecolor(255, 255, 255),
-            "— Mechanical Keyboard Engine".truecolor(180, 160, 255),
-            "             ║".truecolor(120, 80, 255)
-        );
-        println!("{}", "╚══════════════════════════════════════════════════════════════╝".truecolor(120, 80, 255));
-        println!();
+        println!("  {}  {}", "thock".bold().truecolor(255, 255, 255), "v0.1.0 · mechanical keyboard acoustic engine".truecolor(130, 130, 150));
+        println!("  {}", "──────────────────────────────────────────────────────".truecolor(60, 60, 75));
 
         if !ax_trusted {
-            println!("{}", "  ┌────────────────────────────────────────────────────────────┐".truecolor(255, 80, 80));
-            println!("  {} {} {}",
-                "│".truecolor(255, 80, 80),
-                "⚠  ACCESSIBILITY PERMISSION MISSING".bold().truecolor(255, 80, 80),
-                "                        │".truecolor(255, 80, 80)
-            );
-            println!("  {} {} {}",
-                "│".truecolor(255, 80, 80),
-                "  Keypresses cannot be detected.                             ".truecolor(255, 180, 80),
-                "│".truecolor(255, 80, 80)
-            );
-            println!("  {} {} {}",
-                "│".truecolor(255, 80, 80),
-                "  Settings opened — grant & restart.                         ".truecolor(255, 220, 100),
-                "│".truecolor(255, 80, 80)
-            );
-            println!("{}", "  └────────────────────────────────────────────────────────────┘".truecolor(255, 80, 80));
-            println!();
+            println!("  {}", "Accessibility permission missing".bold().truecolor(240, 100, 100));
+            println!("  {}", "Keypress detection requires Accessibility. Prompt opened in System Settings.".truecolor(180, 180, 190));
+            println!("  {}", "Grant access and restart Thock.".truecolor(140, 140, 150));
+            println!("  {}", "──────────────────────────────────────────────────────".truecolor(60, 60, 75));
         }
 
-        println!("  {}  {}", "▶ Active Pack:".bold().truecolor(255, 200, 80), pack_display.bold().truecolor(255, 255, 255));
-        println!("  {}  {}", "🔊 Master Vol:".bold().truecolor(80, 200, 255), vol_bar.bold());
-        println!("  {}  {}", "⚡ Performance:".bold().truecolor(80, 255, 140), "Zero Latency i16 PCM (Main Thread 0ms delay)".truecolor(180, 230, 200));
-        println!("  {}  {}", "✨ Interaction:".bold().truecolor(255, 120, 220), "Press Enter or type 'menu' for Interactive Scroll Menu".truecolor(255, 220, 160));
-        println!("  {}  {}", "💡 Commands:   ".dimmed(), "pack <name>, vol <0-100>, asmr, proc, help, exit".dimmed());
+        let rain_on = crate::dsp::ASMR_RAIN_ON.load(Ordering::Relaxed) != 0;
+        let wind_on = crate::dsp::ASMR_WIND_ON.load(Ordering::Relaxed) != 0;
+        let thunder_on = crate::dsp::ASMR_THUNDER_ON.load(Ordering::Relaxed) != 0;
+        let ambient_desc = if !rain_on && !wind_on && !thunder_on {
+            "off".truecolor(120, 120, 130).to_string()
+        } else {
+            let mut parts = Vec::new();
+            if rain_on { parts.push("rain".truecolor(120, 200, 255).to_string()); }
+            if wind_on { parts.push("wind".truecolor(160, 220, 255).to_string()); }
+            if thunder_on { parts.push("thunder".truecolor(255, 210, 100).to_string()); }
+            parts.join(" · ")
+        };
+
+        println!("  {:10}  {}", "pack".truecolor(140, 140, 160), pack_display.bold().truecolor(245, 245, 250));
+        println!("  {:10}  {}", "volume".truecolor(140, 140, 160), vol_bar);
+        println!("  {:10}  {}", "ambient".truecolor(140, 140, 160), ambient_desc);
+        println!("  {:10}  {}", "engine".truecolor(140, 140, 160), "zero-latency i16 pcm".truecolor(100, 210, 150));
+        println!("  {}", "──────────────────────────────────────────────────────".truecolor(60, 60, 75));
+        println!("  {}", "Press Enter for interactive menu, or type 'help'".truecolor(120, 120, 140));
         println!();
     }
 
@@ -820,81 +812,98 @@ pub fn run(is_cli: bool) {
                 let active_name = cur_name.read().unwrap().replace('_', " ");
                 let cur_vol = VOL.load(Ordering::Relaxed);
                 let menu_options = vec![
-                    format!("🎹 Switch Sound Pack (Current: {})", active_name),
-                    format!("🔊 Adjust Master Volume (Current: {}%)", cur_vol),
-                    "🌧  ASMR Ambient Layers (Rain, Wind, Thunder)".to_string(),
-                    "⚙  Procedural Switch Engine".to_string(),
-                    "📋 View Status Dashboard".to_string(),
-                    "👋 Exit Thock".to_string(),
+                    format!("Pack        Switch sound pack (active: {})", active_name),
+                    format!("Volume      Adjust master playback ({}%)", cur_vol),
+                    "Ambient     Rain, wind & thunder background layers".to_string(),
+                    "Procedural  Tune physical mechanical switch".to_string(),
+                    "Status      Display audio telemetry & profile".to_string(),
+                    "Exit        Quit Thock".to_string(),
                 ];
 
-                if let Ok(choice) = Select::new("✨ Interactive Menu (↑↓ to scroll, Enter to select):", menu_options).prompt() {
-                    if choice.starts_with("🎹") {
-                        let formatted_packs: Vec<String> = packs.iter().map(|p| p.replace('_', " ")).collect();
-                        if let Ok(selected) = Select::new("Choose a Sound Pack:", formatted_packs).prompt() {
-                            let raw_name = selected.to_lowercase().replace(' ', "_");
+                if let Ok(choice) = Select::new("Select action (↑↓ scroll, Enter select):", menu_options).prompt() {
+                    if choice.starts_with("Pack") {
+                        let active_clean = cur_name.read().unwrap().to_lowercase().replace(' ', "_");
+                        let formatted_packs: Vec<String> = packs.iter().map(|p| {
+                            let title = p.replace('_', " ");
+                            if p == &active_clean {
+                                format!("{:<26} (active)", title)
+                            } else {
+                                format!("{:<26}", title)
+                            }
+                        }).collect();
+                        if let Ok(selected) = Select::new("Select sound pack:", formatted_packs).prompt() {
+                            let clean_title = selected.split_whitespace().take_while(|&s| s != "(active)").collect::<Vec<_>>().join(" ");
+                            let raw_name = clean_title.to_lowercase().replace(' ', "_");
                             let p_dir = packs_dir.join(&raw_name);
                             *cur_pack.write().unwrap() = None;
                             if let Some(pack) = load_pack(&p_dir) {
                                 *cur_pack.write().unwrap() = Some(pack);
                                 *cur_name.write().unwrap() = raw_name.clone();
-                                println!("  {} {}", "✔".bold().truecolor(80,255,140), format!("Switched to pack: {}", selected).bold().truecolor(255,255,255));
+                                println!("  {} Pack: {}", "✓".bold().truecolor(80, 220, 140), clean_title.bold().truecolor(245, 245, 250));
                                 save_settings(&packs_dir.join(".settings.json"), VOL.load(Ordering::Relaxed), &raw_name);
                             }
                         }
-                    } else if choice.starts_with("🔊") {
-                        if let Ok(v_str) = inquire::Text::new("Enter new volume (0-100):").prompt() {
+                    } else if choice.starts_with("Volume") {
+                        if let Ok(v_str) = inquire::Text::new("Enter volume [0-100]:").prompt() {
                             if let Ok(v) = v_str.parse::<u32>() {
                                 let v = v.clamp(0, 100);
                                 VOL.store(v, Ordering::Relaxed);
-                                println!("  {} Volume set to {}%", "✔".bold().truecolor(80,255,140), v);
+                                let filled = (v / 10).min(10) as usize;
+                                let empty = 10 - filled;
+                                let bar = format!("[{}{}]", "█".repeat(filled).truecolor(80, 220, 140), "░".repeat(empty).truecolor(70, 70, 85));
+                                println!("  {} Volume: {}% {}", "✓".bold().truecolor(80, 220, 140), v, bar);
                                 save_settings(&packs_dir.join(".settings.json"), v, &*cur_name.read().unwrap());
+                            } else {
+                                println!("  {} Volume must be a number between 0 and 100", "✗".bold().truecolor(240, 100, 100));
                             }
                         }
-                    } else if choice.starts_with("🌧") {
+                    } else if choice.starts_with("Ambient") {
+                        let rain_st = if crate::dsp::ASMR_RAIN_ON.load(Ordering::Relaxed) != 0 { "ON " } else { "OFF" };
+                        let wind_st = if crate::dsp::ASMR_WIND_ON.load(Ordering::Relaxed) != 0 { "ON " } else { "OFF" };
+                        let thunder_st = if crate::dsp::ASMR_THUNDER_ON.load(Ordering::Relaxed) != 0 { "ON " } else { "OFF" };
                         let asmr_opts = vec![
-                            "Toggle Rain Layer".to_string(),
-                            "Toggle Wind Layer".to_string(),
-                            "Toggle Thunder Layer".to_string(),
-                            "Turn All ASMR Off".to_string(),
+                            format!("Rain       [{}] Dynamic low-pass warmth filter", rain_st),
+                            format!("Wind       [{}] Dual-LFO organic gust modulation", wind_st),
+                            format!("Thunder    [{}] Ambient rolling rumble (tail-faded)", thunder_st),
+                            "Turn Off   Disable all ambient layers".to_string(),
                         ];
-                        if let Ok(asmr_sel) = Select::new("ASMR Settings:", asmr_opts).prompt() {
+                        if let Ok(asmr_sel) = Select::new("Ambient sound settings:", asmr_opts).prompt() {
                             match asmr_sel.as_str() {
-                                "Toggle Rain Layer" => {
+                                s if s.starts_with("Rain") => {
                                     let cur = crate::dsp::ASMR_RAIN_ON.load(Ordering::Relaxed) != 0;
                                     crate::dsp::ASMR_RAIN_ON.store(if cur { 0 } else { 1 }, Ordering::Relaxed);
-                                    println!("  Rain: {}", if cur { "OFF".truecolor(255,100,100) } else { "ON".bold().truecolor(80,255,140) });
+                                    println!("  {} Rain: {}", "✓".bold().truecolor(80, 220, 140), if !cur { "ON" } else { "OFF" });
                                 },
-                                "Toggle Wind Layer" => {
+                                s if s.starts_with("Wind") => {
                                     let cur = crate::dsp::ASMR_WIND_ON.load(Ordering::Relaxed) != 0;
                                     crate::dsp::ASMR_WIND_ON.store(if cur { 0 } else { 1 }, Ordering::Relaxed);
-                                    println!("  Wind: {}", if cur { "OFF".truecolor(255,100,100) } else { "ON".bold().truecolor(80,255,140) });
+                                    println!("  {} Wind: {}", "✓".bold().truecolor(80, 220, 140), if !cur { "ON" } else { "OFF" });
                                 },
-                                "Toggle Thunder Layer" => {
+                                s if s.starts_with("Thunder") => {
                                     let cur = crate::dsp::ASMR_THUNDER_ON.load(Ordering::Relaxed) != 0;
                                     crate::dsp::ASMR_THUNDER_ON.store(if cur { 0 } else { 1 }, Ordering::Relaxed);
-                                    println!("  Thunder: {}", if cur { "OFF".truecolor(255,100,100) } else { "ON".bold().truecolor(80,255,140) });
+                                    println!("  {} Thunder: {}", "✓".bold().truecolor(80, 220, 140), if !cur { "ON" } else { "OFF" });
                                 },
-                                "Turn All ASMR Off" => {
+                                s if s.starts_with("Turn Off") => {
                                     crate::dsp::ASMR_RAIN_ON.store(0, Ordering::Relaxed);
                                     crate::dsp::ASMR_WIND_ON.store(0, Ordering::Relaxed);
                                     crate::dsp::ASMR_THUNDER_ON.store(0, Ordering::Relaxed);
-                                    println!("  All ASMR layers disabled.");
+                                    println!("  {} All ambient layers disabled", "✓".bold().truecolor(80, 220, 140));
                                 },
                                 _ => {}
                             }
                         }
-                    } else if choice.starts_with("⚙") {
+                    } else if choice.starts_with("Procedural") {
                         let proc_opts = vec![
-                            "Switch Type: cream".to_string(),
-                            "Switch Type: linear / red".to_string(),
-                            "Switch Type: tactile / brown".to_string(),
-                            "Switch Type: clicky / blue".to_string(),
+                            "Cream      NovelKeys Cream (smooth POM on POM)".to_string(),
+                            "Linear     Cherry MX Red (smooth linear bottom-out)".to_string(),
+                            "Tactile    Cherry MX Brown (light bump, crisp clack)".to_string(),
+                            "Clicky     Cherry MX Blue (sharp click leaf snap)".to_string(),
                         ];
-                        if let Ok(sel) = Select::new("Choose Switch Preset:", proc_opts).prompt() {
-                            let switch_val = if sel.contains("cream") { "cream" }
-                                else if sel.contains("linear") { "linear" }
-                                else if sel.contains("tactile") { "tactile" }
+                        if let Ok(sel) = Select::new("Procedural switch profile:", proc_opts).prompt() {
+                            let switch_val = if sel.contains("Cream") { "cream" }
+                                else if sel.contains("Linear") { "linear" }
+                                else if sel.contains("Tactile") { "tactile" }
                                 else { "clicky" };
                             let mut lock = cur_pack.write().unwrap();
                             if lock.is_none() || lock.as_ref().unwrap().procedural.is_none() {
@@ -910,37 +919,38 @@ pub fn run(is_cli: bool) {
                             if let Some(pack) = lock.as_mut() {
                                 if let Some(proc) = &mut pack.procedural {
                                     proc.switch_type = switch_val.to_string();
-                                    println!("  {} Procedural switch set to: {}", "✔".bold().truecolor(80,255,140), switch_val);
+                                    println!("  {} Switch preset: {}", "✓".bold().truecolor(80, 220, 140), switch_val.bold().truecolor(245, 245, 250));
                                 }
                             }
                         }
-                    } else if choice.starts_with("📋") {
+                    } else if choice.starts_with("Status") {
                         let p_name = cur_name.read().unwrap().replace('_', " ");
                         let cur_vol = VOL.load(Ordering::Relaxed);
                         let filled = (cur_vol / 10).min(10) as usize;
                         let empty = 10 - filled;
-                        let vol_bar = format!("[{}{}] {}%", "█".repeat(filled).truecolor(80, 255, 140), "░".repeat(empty).truecolor(80, 80, 100), cur_vol);
+                        let vol_bar = format!("[{}{}] {}%", "█".repeat(filled).truecolor(80, 220, 140), "░".repeat(empty).truecolor(70, 70, 85), cur_vol);
                         let rain_on = crate::dsp::ASMR_RAIN_ON.load(Ordering::Relaxed) != 0;
                         let wind_on = crate::dsp::ASMR_WIND_ON.load(Ordering::Relaxed) != 0;
                         let thunder_on = crate::dsp::ASMR_THUNDER_ON.load(Ordering::Relaxed) != 0;
-                        let dot = |on: bool| if on { "●".truecolor(80, 255, 140) } else { "○".truecolor(100, 100, 100) };
+                        let dot = |on: bool| if on { "ON ".bold().truecolor(80, 220, 140) } else { "OFF".truecolor(120, 120, 130) };
                         println!();
-                        println!("{}", "  ┌─ Thock Status ───────────────────────────────────────┐".truecolor(120, 80, 255));
-                        println!("  {}  {}  {}", "│".truecolor(120, 80, 255), "Active Pack :".bold().truecolor(255, 200, 80), p_name.bold().truecolor(255, 255, 255));
-                        println!("  {}  {}  {}", "│".truecolor(120, 80, 255), "Master Vol  :".bold().truecolor(80, 200, 255), vol_bar);
-                        println!("  {}  {}  Rain {}  Wind {}  Thunder {}", "│".truecolor(120, 80, 255), "ASMR Layers :".bold().truecolor(140, 200, 255), dot(rain_on), dot(wind_on), dot(thunder_on));
-                        println!("  {}  {}  Zero Latency i16 PCM (0ms delay)", "│".truecolor(120, 80, 255), "Audio Engine:".bold().truecolor(80, 255, 140));
-                        println!("{}", "  └──────────────────────────────────────────────────────┘".truecolor(120, 80, 255));
+                        println!("  {}", "thock status".bold().truecolor(240, 240, 250));
+                        println!("  {}", "──────────────────────────────────────────────────────".truecolor(60, 60, 75));
+                        println!("  {:12}  {}", "pack", p_name.bold().truecolor(255, 255, 255));
+                        println!("  {:12}  {}", "volume", vol_bar);
+                        println!("  {:12}  Rain [{}]  Wind [{}]  Thunder [{}]", "ambient", dot(rain_on), dot(wind_on), dot(thunder_on));
+                        println!("  {:12}  {}", "engine", "zero-latency i16 pcm (lock-free)".truecolor(100, 210, 150));
+                        println!("  {}", "──────────────────────────────────────────────────────".truecolor(60, 60, 75));
                         println!();
-                    } else if choice.starts_with("👋") {
-                        println!("\n  {} {}\n", "◈".truecolor(120,80,255), "Goodbye — happy typing! 👋".bold().truecolor(255,255,255));
+                    } else if choice.starts_with("Exit") {
+                        println!("  {} {}\n", "·".truecolor(130, 130, 150), "thock stopped".truecolor(170, 170, 185));
                         std::process::exit(0);
                     }
                 }
             };
 
             loop {
-                let readline = rl.readline(&format!("{} ", "❯".truecolor(120, 80, 255)));
+                let readline = rl.readline(&format!("{} ", "thock ›".truecolor(130, 120, 180)));
                 let input = match readline {
                     Ok(line) => {
                         let _ = rl.add_history_entry(line.as_str());
@@ -957,16 +967,17 @@ pub fn run(is_cli: bool) {
             match parts[0] {
                 "help" => {
                     println!();
-                    println!("{}", "  ┌─ Commands ───────────────────────────────────────────┐".truecolor(120, 80, 255));
-                    println!("  {}  {:12}  {}", "│".truecolor(120, 80, 255), "menu".truecolor(255, 200, 80),        "Open arrow-key interactive menu (or press Enter)".truecolor(200, 200, 200));
-                    println!("  {}  {:12}  {}", "│".truecolor(120, 80, 255), "status".truecolor(255, 200, 80),      "View active pack, volume & ASMR dashboard   ".truecolor(200, 200, 200));
-                    println!("  {}  {:12}  {}", "│".truecolor(120, 80, 255), "vol <0-100>".truecolor(255, 200, 80), "Set master volume                            ".truecolor(200, 200, 200));
-                    println!("  {}  {:12}  {}", "│".truecolor(120, 80, 255), "pack <name>".truecolor(255, 200, 80), "Switch to a sound pack                       ".truecolor(200, 200, 200));
-                    println!("  {}  {:12}  {}", "│".truecolor(120, 80, 255), "packs".truecolor(255, 200, 80),       "List & scroll all sound packs                ".truecolor(200, 200, 200));
-                    println!("  {}  {:12}  {}", "│".truecolor(120, 80, 255), "proc".truecolor(255, 200, 80),        "View/Edit procedural synthesis settings      ".truecolor(200, 200, 200));
-                    println!("  {}  {:12}  {}", "│".truecolor(120, 80, 255), "asmr".truecolor(255, 200, 80),        "ASMR background audio (rain/wind/thunder)    ".truecolor(200, 200, 200));
-                    println!("  {}  {:12}  {}", "│".truecolor(120, 80, 255), "quit / exit".truecolor(255, 200, 80), "Close Thock                                  ".truecolor(200, 200, 200));
-                    println!("{}", "  └──────────────────────────────────────────────────────┘".truecolor(120, 80, 255));
+                    println!("  {}", "Commands".bold().truecolor(240, 240, 250));
+                    println!("  {}", "──────────────────────────────────────────────────────".truecolor(60, 60, 75));
+                    println!("  {:16}  {}", "menu".truecolor(200, 190, 255), "Interactive menu (or press Enter)".truecolor(160, 160, 175));
+                    println!("  {:16}  {}", "status".truecolor(200, 190, 255), "Display current pack & telemetry".truecolor(160, 160, 175));
+                    println!("  {:16}  {}", "pack <name>".truecolor(200, 190, 255), "Switch sound pack by name".truecolor(160, 160, 175));
+                    println!("  {:16}  {}", "packs".truecolor(200, 190, 255), "Interactive sound pack selector".truecolor(160, 160, 175));
+                    println!("  {:16}  {}", "vol <0-100>".truecolor(200, 190, 255), "Set master playback volume".truecolor(160, 160, 175));
+                    println!("  {:16}  {}", "asmr [layer]".truecolor(200, 190, 255), "Configure ambient rain/wind/thunder".truecolor(160, 160, 175));
+                    println!("  {:16}  {}", "proc [prop]".truecolor(200, 190, 255), "Tune procedural physics engine".truecolor(160, 160, 175));
+                    println!("  {:16}  {}", "exit / quit".truecolor(200, 190, 255), "Exit Thock".truecolor(160, 160, 175));
+                    println!("  {}", "──────────────────────────────────────────────────────".truecolor(60, 60, 75));
                     println!();
                 },
                 "status" => {
@@ -974,18 +985,19 @@ pub fn run(is_cli: bool) {
                     let cur_vol = VOL.load(Ordering::Relaxed);
                     let filled = (cur_vol / 10).min(10) as usize;
                     let empty = 10 - filled;
-                    let vol_bar = format!("[{}{}] {}%", "█".repeat(filled).truecolor(80, 255, 140), "░".repeat(empty).truecolor(80, 80, 100), cur_vol);
+                    let vol_bar = format!("[{}{}] {}%", "█".repeat(filled).truecolor(80, 220, 140), "░".repeat(empty).truecolor(70, 70, 85), cur_vol);
                     let rain_on = crate::dsp::ASMR_RAIN_ON.load(Ordering::Relaxed) != 0;
                     let wind_on = crate::dsp::ASMR_WIND_ON.load(Ordering::Relaxed) != 0;
                     let thunder_on = crate::dsp::ASMR_THUNDER_ON.load(Ordering::Relaxed) != 0;
-                    let dot = |on: bool| if on { "●".truecolor(80, 255, 140) } else { "○".truecolor(100, 100, 100) };
+                    let dot = |on: bool| if on { "ON ".bold().truecolor(80, 220, 140) } else { "OFF".truecolor(120, 120, 130) };
                     println!();
-                    println!("{}", "  ┌─ Thock Status ───────────────────────────────────────┐".truecolor(120, 80, 255));
-                    println!("  {}  {}  {}", "│".truecolor(120, 80, 255), "Active Pack :".bold().truecolor(255, 200, 80), p_name.bold().truecolor(255, 255, 255));
-                    println!("  {}  {}  {}", "│".truecolor(120, 80, 255), "Master Vol  :".bold().truecolor(80, 200, 255), vol_bar);
-                    println!("  {}  {}  Rain {}  Wind {}  Thunder {}", "│".truecolor(120, 80, 255), "ASMR Layers :".bold().truecolor(140, 200, 255), dot(rain_on), dot(wind_on), dot(thunder_on));
-                    println!("  {}  {}  Zero Latency i16 PCM (0ms delay)", "│".truecolor(120, 80, 255), "Audio Engine:".bold().truecolor(80, 255, 140));
-                    println!("{}", "  └──────────────────────────────────────────────────────┘".truecolor(120, 80, 255));
+                    println!("  {}", "thock status".bold().truecolor(240, 240, 250));
+                    println!("  {}", "──────────────────────────────────────────────────────".truecolor(60, 60, 75));
+                    println!("  {:12}  {}", "pack", p_name.bold().truecolor(255, 255, 255));
+                    println!("  {:12}  {}", "volume", vol_bar);
+                    println!("  {:12}  Rain [{}]  Wind [{}]  Thunder [{}]", "ambient", dot(rain_on), dot(wind_on), dot(thunder_on));
+                    println!("  {:12}  {}", "engine", "zero-latency i16 pcm (lock-free)".truecolor(100, 210, 150));
+                    println!("  {}", "──────────────────────────────────────────────────────".truecolor(60, 60, 75));
                     println!();
                 },
                 "vol" => {
@@ -993,18 +1005,26 @@ pub fn run(is_cli: bool) {
                         if let Ok(v) = parts[1].parse::<u32>() {
                             let v = v.clamp(0, 100);
                             VOL.store(v, Ordering::Relaxed);
-                            println!("  {} {} {}", "🔊".truecolor(255,200,80), "Volume →".truecolor(180,160,255), format!("{}%", v).bold().truecolor(255,255,255));
+                            let filled = (v / 10).min(10) as usize;
+                            let empty = 10 - filled;
+                            let bar = format!("[{}{}]", "█".repeat(filled).truecolor(80, 220, 140), "░".repeat(empty).truecolor(70, 70, 85));
+                            println!("  {} Volume: {}% {}", "✓".bold().truecolor(80, 220, 140), v, bar);
                             save_settings(&packs_dir_clone.join(".settings.json"), v, &*current_pack_name_clone.read().unwrap());
                         } else {
-                            println!("  {} {}", "✗".bold().truecolor(255,80,80), "Invalid value — use a number 0–100.".truecolor(255,140,80));
+                            println!("  {} Volume must be a number between 0 and 100", "✗".bold().truecolor(240, 100, 100));
                         }
                     } else {
-                        if let Ok(v_str) = inquire::Text::new("Enter volume (0-100):").prompt() {
+                        if let Ok(v_str) = inquire::Text::new("Enter volume [0-100]:").prompt() {
                             if let Ok(v) = v_str.parse::<u32>() {
                                 let v = v.clamp(0, 100);
                                 VOL.store(v, Ordering::Relaxed);
-                                println!("  {} Volume set to {}%", "✔".bold().truecolor(80,255,140), v);
+                                let filled = (v / 10).min(10) as usize;
+                                let empty = 10 - filled;
+                                let bar = format!("[{}{}]", "█".repeat(filled).truecolor(80, 220, 140), "░".repeat(empty).truecolor(70, 70, 85));
+                                println!("  {} Volume: {}% {}", "✓".bold().truecolor(80, 220, 140), v, bar);
                                 save_settings(&packs_dir_clone.join(".settings.json"), v, &*current_pack_name_clone.read().unwrap());
+                            } else {
+                                println!("  {} Volume must be a number between 0 and 100", "✗".bold().truecolor(240, 100, 100));
                             }
                         }
                     }
@@ -1017,36 +1037,54 @@ pub fn run(is_cli: bool) {
                         if let Some(pack) = load_pack(&p_dir) {
                             *current_pack_clone.write().unwrap() = Some(pack);
                             *current_pack_name_clone.write().unwrap() = pack_name.clone();
-                            println!("  {} {}", "✔".bold().truecolor(80,255,140), format!("Now playing → {}", pack_name.replace('_', " ")).truecolor(255,255,255));
+                            println!("  {} Pack: {}", "✓".bold().truecolor(80, 220, 140), pack_name.replace('_', " ").bold().truecolor(245, 245, 250));
                             save_settings(&packs_dir_clone.join(".settings.json"), VOL.load(Ordering::Relaxed), &pack_name);
                         } else {
-                            println!("  {} {} {}", "✗".bold().truecolor(255,80,80), "Pack not found:".truecolor(255,140,80), pack_name.truecolor(255,180,80));
+                            println!("  {} Pack not found: '{}'. Type 'packs' to browse.", "✗".bold().truecolor(240, 100, 100), pack_name);
                         }
                     } else {
-                        let formatted_packs: Vec<String> = packs_for_rl.iter().map(|p| p.replace('_', " ")).collect();
-                        if let Ok(selected) = inquire::Select::new("Choose a Sound Pack (↑↓ to scroll, Enter to select):", formatted_packs).prompt() {
-                            let raw_name = selected.to_lowercase().replace(' ', "_");
+                        let active_clean = current_pack_name_clone.read().unwrap().to_lowercase().replace(' ', "_");
+                        let formatted_packs: Vec<String> = packs_for_rl.iter().map(|p| {
+                            let title = p.replace('_', " ");
+                            if p == &active_clean {
+                                format!("{:<26} (active)", title)
+                            } else {
+                                format!("{:<26}", title)
+                            }
+                        }).collect();
+                        if let Ok(selected) = inquire::Select::new("Select sound pack:", formatted_packs).prompt() {
+                            let clean_title = selected.split_whitespace().take_while(|&s| s != "(active)").collect::<Vec<_>>().join(" ");
+                            let raw_name = clean_title.to_lowercase().replace(' ', "_");
                             let p_dir = packs_dir_clone.join(&raw_name);
                             *current_pack_clone.write().unwrap() = None;
                             if let Some(pack) = load_pack(&p_dir) {
                                 *current_pack_clone.write().unwrap() = Some(pack);
                                 *current_pack_name_clone.write().unwrap() = raw_name.clone();
-                                println!("  {} {}", "✔".bold().truecolor(80,255,140), format!("Now playing → {}", selected).bold().truecolor(255,255,255));
+                                println!("  {} Pack: {}", "✓".bold().truecolor(80, 220, 140), clean_title.bold().truecolor(245, 245, 250));
                                 save_settings(&packs_dir_clone.join(".settings.json"), VOL.load(Ordering::Relaxed), &raw_name);
                             }
                         }
                     }
                 },
                 "packs" => {
-                    let formatted_packs: Vec<String> = packs_for_rl.iter().map(|p| p.replace('_', " ")).collect();
-                    if let Ok(selected) = inquire::Select::new("Sound Packs (↑↓ to scroll, Enter to select):", formatted_packs).prompt() {
-                        let raw_name = selected.to_lowercase().replace(' ', "_");
+                    let active_clean = current_pack_name_clone.read().unwrap().to_lowercase().replace(' ', "_");
+                    let formatted_packs: Vec<String> = packs_for_rl.iter().map(|p| {
+                        let title = p.replace('_', " ");
+                        if p == &active_clean {
+                            format!("{:<26} (active)", title)
+                        } else {
+                            format!("{:<26}", title)
+                        }
+                    }).collect();
+                    if let Ok(selected) = inquire::Select::new("Select sound pack:", formatted_packs).prompt() {
+                        let clean_title = selected.split_whitespace().take_while(|&s| s != "(active)").collect::<Vec<_>>().join(" ");
+                        let raw_name = clean_title.to_lowercase().replace(' ', "_");
                         let p_dir = packs_dir_clone.join(&raw_name);
                         *current_pack_clone.write().unwrap() = None;
                         if let Some(pack) = load_pack(&p_dir) {
                             *current_pack_clone.write().unwrap() = Some(pack);
                             *current_pack_name_clone.write().unwrap() = raw_name.clone();
-                            println!("  {} {}", "✔".bold().truecolor(80,255,140), format!("Now playing → {}", selected).bold().truecolor(255,255,255));
+                            println!("  {} Pack: {}", "✓".bold().truecolor(80, 220, 140), clean_title.bold().truecolor(245, 245, 250));
                             save_settings(&packs_dir_clone.join(".settings.json"), VOL.load(Ordering::Relaxed), &raw_name);
                         }
                     }
@@ -1061,7 +1099,7 @@ pub fn run(is_cli: bool) {
                     }
                     if !is_proc {
                         let new_pack = crate::LoadedPack {
-                                                        mappings: std::collections::HashMap::new(),
+                            mappings: std::collections::HashMap::new(),
                             defaults: vec![],
                             vol_mult: 1.0,
                             pitch: 1.0,
@@ -1069,25 +1107,28 @@ pub fn run(is_cli: bool) {
                         };
                         *lock = Some(new_pack);
                         *current_pack_name.write().unwrap() = "__cli_proc__".to_string();
-                        println!("  {} {}", "⚙".truecolor(255,200,80), "Switched to Procedural Engine".bold().truecolor(180,160,255));
+                        println!("  {} Switched to procedural synthesis engine", "✓".bold().truecolor(80, 220, 140));
                     }
                     
                     if parts.len() == 1 {
                         if let Some(pack) = lock.as_ref() {
                             if let Some(proc) = &pack.procedural {
-                                println!("⚙️ Current Procedural Settings:");
-                                println!("  switch: {} (red|black|brown|blue|white)", proc.switch_type);
-                                println!("  weight: {}g (40-90)", proc.spring_weight);
-                                println!("  lube:   {:.2} (0.0-1.0)", proc.lube_amount);
-                                println!("  foam:   {:.2} (0.0-1.0)", proc.foam_mod);
-                                println!("  orings: {:.2} (0.0-1.0)", proc.o_rings);
-                                println!("  pitch:  {:.2} (0.5-2.0)", proc.pitch);
-                                println!("  keycap: {} (pbt|abs)", proc.keycap_material);
-                                println!("  plate:  {} (brass|pom)", proc.plate_material);
-                                println!("  case:   {} (aluminum|plastic)", proc.case_material);
-                                println!("  mount:  {} (tray|gasket)", proc.mounting_style);
-                                println!("
-Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
+                                println!();
+                                println!("  {}", "Procedural Synthesis Engine".bold().truecolor(240, 240, 250));
+                                println!("  {}", "──────────────────────────────────────────────────────".truecolor(60, 60, 75));
+                                println!("  {:12}  {} (cream | linear | tactile | clicky)", "Switch", proc.switch_type.bold().truecolor(255, 255, 255));
+                                println!("  {:12}  {}g", "Weight", proc.spring_weight);
+                                println!("  {:12}  {:.2}", "Lube", proc.lube_amount);
+                                println!("  {:12}  {:.2}", "Foam Mod", proc.foam_mod);
+                                println!("  {:12}  {:.2}", "O-Rings", proc.o_rings);
+                                println!("  {:12}  {:.2}", "Pitch", proc.pitch);
+                                println!("  {:12}  {}", "Keycap", proc.keycap_material);
+                                println!("  {:12}  {}", "Plate", proc.plate_material);
+                                println!("  {:12}  {}", "Case", proc.case_material);
+                                println!("  {:12}  {}", "Mount", proc.mounting_style);
+                                println!("  {}", "──────────────────────────────────────────────────────".truecolor(60, 60, 75));
+                                println!("  {}", "Usage: proc <property> <value>  (e.g. proc lube 0.8)".truecolor(130, 130, 145));
+                                println!();
                             }
                         }
                         continue;
@@ -1099,22 +1140,22 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
                         if let Some(pack) = lock.as_mut() {
                             if let Some(proc) = pack.procedural.as_mut() {
                                 match prop {
-                                    "switch" => { proc.switch_type = val.to_string(); println!("  {} {} → {}", "✔".bold().truecolor(80,255,140), "switch".truecolor(255,200,80), val.bold().truecolor(255,255,255)); },
-                                    "weight" => if let Ok(v) = val.parse::<f32>() { proc.spring_weight = v; println!("  {} {} → {}", "✔".bold().truecolor(80,255,140), "weight".truecolor(255,200,80), format!("{}", v).bold().truecolor(255,255,255)); },
-                                    "lube" => if let Ok(v) = val.parse::<f32>() { proc.lube_amount = v; println!("Set lube to {}", v); },
-                                    "foam" => if let Ok(v) = val.parse::<f32>() { proc.foam_mod = v; println!("Set foam to {}", v); },
-                                    "orings" => if let Ok(v) = val.parse::<f32>() { proc.o_rings = v; println!("Set orings to {}", v); },
-                                    "pitch" => if let Ok(v) = val.parse::<f32>() { proc.pitch = v; println!("Set pitch to {}", v); },
-                                    "keycap" => { proc.keycap_material = val.to_string(); println!("  {} {} → {}", "✔".bold().truecolor(80,255,140), "keycap".truecolor(255,200,80), val.bold().truecolor(255,255,255)); },
-                                    "plate" => { proc.plate_material = val.to_string(); println!("  {} {} → {}", "✔".bold().truecolor(80,255,140), "plate".truecolor(255,200,80), val.bold().truecolor(255,255,255)); },
-                                    "case" => { proc.case_material = val.to_string(); println!("  {} {} → {}", "✔".bold().truecolor(80,255,140), "case".truecolor(255,200,80), val.bold().truecolor(255,255,255)); },
-                                    "mount" => { proc.mounting_style = val.to_string(); println!("  {} {} → {}", "✔".bold().truecolor(80,255,140), "mount".truecolor(255,200,80), val.bold().truecolor(255,255,255)); },
-                                    _ => println!("Unknown procedural property: {}", prop),
+                                    "switch" => { proc.switch_type = val.to_string(); println!("  {} switch → {}", "✓".bold().truecolor(80, 220, 140), val.bold().truecolor(245, 245, 250)); },
+                                    "weight" => if let Ok(v) = val.parse::<f32>() { proc.spring_weight = v; println!("  {} weight → {}g", "✓".bold().truecolor(80, 220, 140), v); },
+                                    "lube" => if let Ok(v) = val.parse::<f32>() { proc.lube_amount = v; println!("  {} lube → {:.2}", "✓".bold().truecolor(80, 220, 140), v); },
+                                    "foam" => if let Ok(v) = val.parse::<f32>() { proc.foam_mod = v; println!("  {} foam → {:.2}", "✓".bold().truecolor(80, 220, 140), v); },
+                                    "orings" => if let Ok(v) = val.parse::<f32>() { proc.o_rings = v; println!("  {} orings → {:.2}", "✓".bold().truecolor(80, 220, 140), v); },
+                                    "pitch" => if let Ok(v) = val.parse::<f32>() { proc.pitch = v; println!("  {} pitch → {:.2}", "✓".bold().truecolor(80, 220, 140), v); },
+                                    "keycap" => { proc.keycap_material = val.to_string(); println!("  {} keycap → {}", "✓".bold().truecolor(80, 220, 140), val); },
+                                    "plate" => { proc.plate_material = val.to_string(); println!("  {} plate → {}", "✓".bold().truecolor(80, 220, 140), val); },
+                                    "case" => { proc.case_material = val.to_string(); println!("  {} case → {}", "✓".bold().truecolor(80, 220, 140), val); },
+                                    "mount" => { proc.mounting_style = val.to_string(); println!("  {} mount → {}", "✓".bold().truecolor(80, 220, 140), val); },
+                                    _ => println!("  {} Unknown procedural property: '{}'", "✗".bold().truecolor(240, 100, 100), prop),
                                 }
                             }
                         }
                     } else {
-                        println!("  {} {}", "tip:".truecolor(100,100,100), "proc <property> <value>  e.g. proc lube 0.9".truecolor(120,80,255));
+                        println!("  {} Usage: proc <property> <value>  (e.g. proc lube 0.8)", "·".truecolor(140, 140, 160));
                     }
                 },
                 "asmr" => {
@@ -1123,20 +1164,16 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
                         let rain_on = ASMR_RAIN_ON.load(Ordering::Relaxed) != 0;
                         let wind_on = ASMR_WIND_ON.load(Ordering::Relaxed) != 0;
                         let thunder_on = ASMR_THUNDER_ON.load(Ordering::Relaxed) != 0;
-                        let dot = |on: bool| if on { "●".truecolor(80, 255, 140) } else { "○".truecolor(100, 100, 100) };
+                        let st = |on: bool| if on { "ON ".bold().truecolor(80, 220, 140) } else { "OFF".truecolor(120, 120, 130) };
                         println!();
-                        println!("{}", "  ┌─ ASMR Status ───────────────────────────────────────┐".truecolor(80, 180, 255));
-                        println!("  {}  {} Master Vol  → {}%", "│".truecolor(80,180,255), "🔊".truecolor(255,200,80), ASMR_MASTER_VOL.load(Ordering::Relaxed).to_string().bold().truecolor(255,255,255));
-                        println!("  {}  {} {} Rain       vol {}%  dens {}%", "│".truecolor(80,180,255), dot(rain_on), "🌧".truecolor(80,180,255), ASMR_RAIN_VOL.load(Ordering::Relaxed), ASMR_RAIN_DENS.load(Ordering::Relaxed));
-                        println!("  {}  {} {} Wind       vol {}%  gust {}%", "│".truecolor(80,180,255), dot(wind_on), "🌬".truecolor(140,200,255), ASMR_WIND_VOL.load(Ordering::Relaxed), ASMR_WIND_GUST.load(Ordering::Relaxed));
-                        println!("  {}  {} {} Thunder    vol {}%  freq {}%  int {}%", "│".truecolor(80,180,255), dot(thunder_on), "⛈".truecolor(255,220,80), ASMR_THUNDER_VOL.load(Ordering::Relaxed), ASMR_THUNDER_FREQ.load(Ordering::Relaxed), ASMR_THUNDER_INT.load(Ordering::Relaxed));
-                        println!("{}", "  └──────────────────────────────────────────────────────┘".truecolor(80, 180, 255));
-                        println!("  {} {}  {}  {}",
-                            "tip:".truecolor(100,100,100),
-                            "asmr rain|wind|thunder|none".truecolor(80,180,255),
-                            "or".truecolor(100,100,100),
-                            "asmr rain_vol 80".truecolor(80,180,255)
-                        );
+                        println!("  {}", "Ambient Layers".bold().truecolor(240, 240, 250));
+                        println!("  {}", "──────────────────────────────────────────────────────".truecolor(60, 60, 75));
+                        println!("  {:12}  {}%", "Master Vol", ASMR_MASTER_VOL.load(Ordering::Relaxed));
+                        println!("  {:12}  [{}]  vol {}%  dens {}%", "Rain", st(rain_on), ASMR_RAIN_VOL.load(Ordering::Relaxed), ASMR_RAIN_DENS.load(Ordering::Relaxed));
+                        println!("  {:12}  [{}]  vol {}%  gust {}%", "Wind", st(wind_on), ASMR_WIND_VOL.load(Ordering::Relaxed), ASMR_WIND_GUST.load(Ordering::Relaxed));
+                        println!("  {:12}  [{}]  vol {}%  freq {}%  intensity {}%", "Thunder", st(thunder_on), ASMR_THUNDER_VOL.load(Ordering::Relaxed), ASMR_THUNDER_FREQ.load(Ordering::Relaxed), ASMR_THUNDER_INT.load(Ordering::Relaxed));
+                        println!("  {}", "──────────────────────────────────────────────────────".truecolor(60, 60, 75));
+                        println!("  {}", "Commands: asmr rain | asmr wind | asmr thunder | asmr none".truecolor(130, 130, 145));
                         println!();
                         continue;
                     }
@@ -1147,28 +1184,25 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
                             crate::dsp::ASMR_RAIN_ON.store(0, Ordering::Relaxed);
                             crate::dsp::ASMR_WIND_ON.store(0, Ordering::Relaxed);
                             crate::dsp::ASMR_THUNDER_ON.store(0, Ordering::Relaxed);
-                            println!("  {} {}", "○".truecolor(100,100,100), "ASMR layers all off".truecolor(180,180,180));
+                            println!("  {} All ambient layers disabled", "✓".bold().truecolor(80, 220, 140));
                         },
                         "rain" => {
                             let curr = crate::dsp::ASMR_RAIN_ON.load(Ordering::Relaxed) != 0;
                             let new_st = if parts.len() > 2 { parts[2] == "on" || parts[2] == "1" } else { !curr };
                             crate::dsp::ASMR_RAIN_ON.store(if new_st { 1 } else { 0 }, Ordering::Relaxed);
-                            let st_str = if new_st { "Rain layer on".bold().truecolor(80,180,255) } else { "Rain layer off".truecolor(140,140,140) };
-                            println!("  {} {}", "🌧".truecolor(80,180,255), st_str);
+                            println!("  {} Rain: {}", "✓".bold().truecolor(80, 220, 140), if new_st { "ON" } else { "OFF" });
                         },
                         "wind" => {
                             let curr = crate::dsp::ASMR_WIND_ON.load(Ordering::Relaxed) != 0;
                             let new_st = if parts.len() > 2 { parts[2] == "on" || parts[2] == "1" } else { !curr };
                             crate::dsp::ASMR_WIND_ON.store(if new_st { 1 } else { 0 }, Ordering::Relaxed);
-                            let st_str = if new_st { "Wind layer on".bold().truecolor(140,200,255) } else { "Wind layer off".truecolor(140,140,140) };
-                            println!("  {} {}", "🌬".truecolor(140,200,255), st_str);
+                            println!("  {} Wind: {}", "✓".bold().truecolor(80, 220, 140), if new_st { "ON" } else { "OFF" });
                         },
                         "thunder" => {
                             let curr = crate::dsp::ASMR_THUNDER_ON.load(Ordering::Relaxed) != 0;
                             let new_st = if parts.len() > 2 { parts[2] == "on" || parts[2] == "1" } else { !curr };
                             crate::dsp::ASMR_THUNDER_ON.store(if new_st { 1 } else { 0 }, Ordering::Relaxed);
-                            let st_str = if new_st { "Thunder layer on".bold().truecolor(255,220,80) } else { "Thunder layer off".truecolor(140,140,140) };
-                            println!("  {} {}", "⛈".truecolor(255,220,80), st_str);
+                            println!("  {} Thunder: {}", "✓".bold().truecolor(80, 220, 140), if new_st { "ON" } else { "OFF" });
                         },
                         _ => {
                             if parts.len() >= 3 {
@@ -1183,23 +1217,23 @@ Change a setting: proc <setting> <value> (e.g. proc lube 0.9)");
                                         "thunder_freq" => crate::dsp::ASMR_THUNDER_FREQ.store(v, Ordering::Relaxed),
                                         "thunder_int" => crate::dsp::ASMR_THUNDER_INT.store(v, Ordering::Relaxed),
                                         "thunder_vol" => crate::dsp::ASMR_THUNDER_VOL.store(v, Ordering::Relaxed),
-                                        _ => { println!("Unknown ASMR property: {}", prop); continue; }
+                                        _ => { println!("  {} Unknown ASMR property: '{}'", "✗".bold().truecolor(240, 100, 100), prop); continue; }
                                     }
-                                    println!("  {} {} → {}%", "✔".bold().truecolor(80,255,140), prop.truecolor(255,200,80), v.to_string().bold().truecolor(255,255,255));
+                                    println!("  {} {} → {}%", "✓".bold().truecolor(80, 220, 140), prop, v);
                                 } else {
-                                    println!("  {} {}", "✗".bold().truecolor(255,80,80), "Value must be a number 0–100".truecolor(255,140,80));
+                                    println!("  {} Value must be a number between 0 and 100", "✗".bold().truecolor(240, 100, 100));
                                 }
                             } else {
-                                println!("  {} {} {} {}", "✗".bold().truecolor(255,80,80), "Missing value. Usage:".truecolor(255,140,80), "asmr".truecolor(255,200,80), format!("{} <0–100>", prop).truecolor(255,255,255));
+                                println!("  {} Usage: asmr {} <0–100>", "·".truecolor(140, 140, 160), prop);
                             }
                         }
                     }
                 },
                 "quit" | "exit" => {
-                    println!("\n  {} {}\n", "◈".truecolor(120,80,255), "Goodbye — happy typing! 👋".bold().truecolor(255,255,255));
+                    println!("  {} {}\n", "·".truecolor(130, 130, 150), "thock stopped".truecolor(170, 170, 185));
                     std::process::exit(0);
                 },
-                _ => println!("  {} {} {}", "?".bold().truecolor(255,200,80), "Unknown command:".truecolor(180,180,180), format!("{:?} — type help", parts[0]).truecolor(120,80,255)),
+                _ => println!("  {} Unknown command '{}'. Type 'help' for available commands.", "·".truecolor(140, 140, 160), parts[0]),
             }
         }
         });
