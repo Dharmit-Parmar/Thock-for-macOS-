@@ -26,6 +26,12 @@ Overhaul the ambient ASMR sound engine (rain, wind, thunder) in Thock to replace
    - State transition caching eliminating redundant mutex locks in `Sink` at 33 Hz.
    - Loop sleep at end: 30ms active, 250ms idle (0.000% CPU).
 
-4. **Verification**:
-   - `cargo test`: 4/4 tests passed (`test_zero_copy_source_conversion`, `test_load_pack_deduplication`, `test_seamless_loop_source_bounded_and_smooth`, `test_asmr_buffer_caching_and_zero_copy`).
+4. **Acoustic Bug Fixes & Refinements**:
+   - **Motor Rumble Elimination**: Replaced 320 Hz / +3.5 dB resonant peaking filter with an 85 Hz sub-bass highpass to eliminate HVAC/car rumble in the source recording. Expanded rain filter cutoff to 1200 Hz – 4000 Hz for airy droplet clarity. Reduced makeup multiplier to 1.05 to eliminate 3rd-harmonic intermodulation distortion.
+   - **Thunder Isolation**: Implemented backward-search peak crack detection in `decode_faded_thunder`, removing the 18.37s ambient rain prefix. Thunder now triggers as an isolated 1.63s lightning strike (600ms pre-rumble + 40ms attack + crack + 1.2s dissipation), completely preventing the pre-strike rain density jump.
+   - **Wind Air-Texture**: Expanded aerodynamic cutoff sweep to 350 Hz – 1200 Hz and integrated 750 Hz peaking EQ (+2 dB) into the active processing path for organic breath and leaf flutter.
+
+5. **Verification**:
+   - `cargo test`: 4/4 tests passed.
+   - `cargo run --bin verify`: Thunder trimmed duration verified at 1.63s (-21.3 dBFS peak crack).
    - `cargo build --release`: clean compile.

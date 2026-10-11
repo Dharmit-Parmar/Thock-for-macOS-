@@ -75,4 +75,19 @@ fn main() {
     analyze("rain.ogg", include_bytes!("../../assets/asmr/rain.ogg"));
     analyze("wind.ogg", include_bytes!("../../assets/asmr/wind.ogg"));
     analyze("thunder.ogg", include_bytes!("../../assets/asmr/thunder.ogg"));
+
+    if let Some(thunder_buf) = thock::get_thunder_buffer() {
+        let frames = thunder_buf.samples.len() / thunder_buf.channels as usize;
+        let dur = frames as f32 / thunder_buf.sample_rate as f32;
+        let max_val = thunder_buf.samples.iter().map(|&s| s.abs()).max().unwrap_or(0);
+        let sum_sq: f64 = thunder_buf.samples.iter().map(|&s| {
+            let f = s as f32 / 32768.0;
+            (f * f) as f64
+        }).sum();
+        let rms = (sum_sq / thunder_buf.samples.len() as f64).sqrt() as f32;
+        println!("\nTrimmed Thunder Buffer (in-memory):");
+        println!("  channels={}, sample_rate={}, frames={}, duration={:.2}s", thunder_buf.channels, thunder_buf.sample_rate, frames, dur);
+        println!("  peak={:.3}, rms={:.3} ({:.1} dBFS)", max_val as f32 / 32768.0, rms, 20.0 * rms.log10());
+    }
 }
+
