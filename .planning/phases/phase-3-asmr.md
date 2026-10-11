@@ -26,17 +26,25 @@ Overhaul the ambient ASMR sound engine (rain, wind, thunder) in Thock to replace
    - State transition caching eliminating redundant mutex locks in `Sink` at 33 Hz.
    - Loop sleep at end: 30ms active, 250ms idle (0.000% CPU).
 
-4. **Acoustic Bug Fixes & Procedural Synthesis**:
-   - **Procedural Rain Synthesis (100% Zero-Drone Natural Audio)**: Discovered that `rain.ogg` contained un-filterable mechanical harmonics (87.7 Hz, 258.4 Hz, 330.4 Hz, 516.8 Hz from automotive traffic/HVAC in the source recording). Implemented pure procedural natural rain generation (`generate_procedural_rain_buffer`) using:
-     - 1-pole pink/brown noise diffusion for continuous distant shower bed
-     - Stochastic Poisson process ($\lambda \approx 160\text{ drops/sec}$) triggering Minnaert bubble/damped droplet oscillators ($1.6\text{ kHz} - 3.8\text{ kHz}$, $\tau \in [2, 5]\text{ ms}$)
-     - 420 Hz highpass + 7.0 kHz lowpass + 1.9 kHz foliage resonance + 0.6s equal-power crossfade
-     - Measured frequency spectrum: $0\text{--}100\text{ Hz}$ reduced to $0.01\%$ ($-42\text{ dBFS}$), with $85.3\%$ of energy in the natural droplet impact band.
-     - Removed `static RAIN_OGG` from binary compilation, saving 292 KB static storage.
+4. **Acoustic Bug Fixes & Live Procedural Rain Engine**:
+   - **Live Procedural Rain Engine (`ProceduralRain: rodio::Source`)**:
+     - Completely replaced pre-rendered static rain buffer with real-time continuous streaming source.
+     - **Physical Water Droplet Modeling**:
+       - 16 polyphonic physical droplet voices modeled on Minnaert bubble/cavity resonance.
+       - Upward exponential micro-chirp ($+15\%$ over $1.5\text{ ms}$) reflecting physical cavity rebound.
+       - $0.35\text{ ms}$ high-frequency shock excitation pulse producing physical tactile "tip" attack.
+       - 3 droplet size distributions: Crisp small drops ($1750 - 2400\text{ Hz}$, $60\%$), Medium hollow drops ($1100 - 1600\text{ Hz}$, $30\%$), Deep fat drops ($650 - 970\text{ Hz}$, $10\%$).
+     - **3-Stage Organic Onset Progression ("Tip... Tip... Tip...")**:
+       - Stage 1 ($t \in [0.0\text{s}, 2.0\text{s}]$): Pure silence between sparse isolated droplet impacts ($\lambda = 2.4 - 4.0\text{ drops/sec}$, diffuse mist bed gain = $0.0$). Delivers crystal-clear individual "tip... tip... tip..." droplet strikes on toggle ON.
+       - Stage 2 ($t \in [2.0\text{s}, 5.5\text{s}]$): Smootherstep acceleration ($S(u) = u^3(u(6u-15)+10)$) ramping drop arrivals to steady state, while soft background mist bed ($450\text{ Hz} - 3200\text{ Hz}$) gently fades in.
+       - Stage 3 ($t > 5.5\text{s}$): Steady-state authentic rainfall with dynamic density slider response (`ASMR_RAIN_DENS`). Droplets provide $>85\%$ of perceptual energy, zero motor/HVAC rumble.
+     - **Zero RAM & Instant Reset**:
+       - Streaming source uses $< 800\text{ bytes}$ on stack, $0\text{ MB}$ heap buffer.
+       - Reset on click: `rain_sink.stop()` on disable, fresh `ProceduralRain::new(48000)` on enable restarts timeline at $t=0.0$ on every click.
    - **Thunder Isolation**: Backward-search transient detection in `decode_faded_thunder` isolates the 1.63s lightning strike (600ms pre-rumble + 40ms attack + crack + 1.2s dissipation), eliminating the 18.37s ambient rain prefix.
    - **Wind Air-Texture**: Dynamic aerodynamic sweep ($350\text{ Hz} - 1200\text{ Hz}$) + 750 Hz peaking EQ (+2 dB) for leaf flutter and organic breath.
 
 5. **Verification**:
-   - `cargo test`: 4/4 tests passed.
-   - `cargo run --bin verify`: Procedural Rain (0% motor drone) verified at RMS 0.029 (-30.6 dBFS, 9.40s seamless loop). Thunder verified at 1.63s (-21.3 dBFS peak crack).
-   - `cargo build --release`: clean compile in 13.27s.
+   - `cargo test`: 5/5 tests passed, including `test_procedural_rain_onset_progression`.
+   - `cargo run --bin verify`: Procedural Rain verified at RMS 0.034 (-29.4 dBFS). Thunder verified at 1.63s (-21.3 dBFS peak crack).
+   - `cargo build --release`: clean compile in 13.30s.

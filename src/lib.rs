@@ -770,25 +770,22 @@ pub fn run(is_cli: bool) {
                 let m = ASMR_MASTER_VOL.load(Ordering::Relaxed) as f32 / 100.0;
                 let dt = 0.030f32; // 30ms (33.3 Hz) for silky-smooth envelope
 
-                // Rain (warm, gentle, dynamically filtered with binaural stereo & peaking warmth EQ)
+                // Rain (live procedural acoustic engine with physical "tip tip tip" onset progression)
                 if rain_on {
-                    if rain_sink.empty() {
-                        if let Some(buf) = get_rain_buffer() {
-                            rain_sink.append(SeamlessLoopSource::new(buf.samples.clone(), buf.channels, buf.sample_rate, AsmrLoopKind::Rain));
-                        }
-                    }
                     if !rain_playing {
+                        rain_sink.stop();
+                        rain_sink.append(crate::dsp::ProceduralRain::new(48000));
                         rain_sink.play();
                         rain_playing = true;
                     }
                     let rain_v = ASMR_RAIN_VOL.load(Ordering::Relaxed) as f32 / 100.0;
-                    let target = rain_v * m * 0.85;
+                    let target = rain_v * m * 0.90;
                     if (target - prev_rain_vol).abs() > 0.002 {
                         rain_sink.set_volume(target);
                         prev_rain_vol = target;
                     }
                 } else if rain_playing {
-                    rain_sink.pause();
+                    rain_sink.stop();
                     rain_playing = false;
                     prev_rain_vol = -1.0;
                 }
@@ -1932,6 +1929,56 @@ mod tests {
             assert!(!sample.is_nan(), "Sample must not be NaN");
             assert!(sample >= -1.0 && sample <= 1.0, "Sample {} must be strictly bounded within [-1.0, 1.0]", sample);
         }
+    }
+
+    #[test]
+    fn test_procedural_rain_onset_progression() {
+        use rodio::Source;
+        let mut rain = crate::dsp::ProceduralRain::new(48000);
+        assert_eq!(rain.channels(), 2);
+        assert_eq!(rain.sample_rate(), 48000);
+
+        let mut silent_frames_early = 0usize;
+        let mut droplet_spikes_early = 0usize;
+
+        // Stage 1: First 1.5 seconds (72,000 stereo frames = 144,000 samples)
+        // Must contain clear silence between isolated droplet impacts ("tip... tip... tip...")
+        for _ in 0..72_000 {
+            let l = rain.next().expect("ProceduralRain yields f32");
+            let r = rain.next().expect("ProceduralRain yields f32");
+            assert!(!l.is_nan() && !r.is_nan());
+            assert!(l >= -1.0 && l <= 1.0 && r >= -1.0 && r <= 1.0);
+
+            let max_amp = l.abs().max(r.abs());
+            if max_amp < 0.0005 {
+                silent_frames_early += 1;
+            } else if max_amp > 0.05 {
+                droplet_spikes_early += 1;
+            }
+        }
+
+        // In Stage 1, majority of frames must be silent between sparse drops
+        assert!(silent_frames_early > 50_000, "Early onset must have silent space between drops: {}", silent_frames_early);
+        assert!(droplet_spikes_early > 0, "Early onset must contain droplet strikes");
+
+        // Advance to Stage 3 (steady state rain shower at t > 5.5s)
+        for _ in 0..200_000 {
+            rain.next();
+            rain.next();
+        }
+
+        let mut active_frames_steady = 0usize;
+        for _ in 0..48_000 {
+            let l = rain.next().expect("ProceduralRain yields f32");
+            let r = rain.next().expect("ProceduralRain yields f32");
+            let max_amp = l.abs().max(r.abs());
+            if max_amp > 0.002 {
+                active_frames_steady += 1;
+            }
+        }
+
+        // In steady state, rain shower should be continuous and dense
+        assert!(active_frames_steady > 40_000, "Steady state must be continuous rainfall: {}", active_frames_steady);
     }
 }
 
