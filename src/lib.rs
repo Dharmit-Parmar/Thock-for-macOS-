@@ -117,41 +117,21 @@ fn decode_faded_thunder(bytes: &'static [u8]) -> Option<AsmrBuffer> {
     let total_frames = raw.len() / ch;
     if total_frames == 0 { return None; }
 
-    // 1. Locate the primary thunderclap: find peak sample in the recording
-    let mut peak_val: i16 = 0;
-    let mut peak_frame = 0usize;
-    for (f, frame) in raw.chunks(ch).enumerate() {
-        for &s in frame {
-            let abs_s = s.abs();
-            if abs_s > peak_val {
-                peak_val = abs_s;
-                peak_frame = f;
-            }
-        }
-    }
+    // Primary complete thunderclap with 9+ seconds of rolling reverberation (5.1s to 15.0s).
+    // Note: The second strike at 19.5s was truncated by EOF at 20.0s, leaving no tail.
+    // The complete thunderclap with crack and rolling reverberation is at 5.1s - 15.0s.
+    let start_frame = ((sample_rate as usize * 51) / 10).min(total_frames); // 5.1s onset
+    let end_frame = ((sample_rate as usize * 150) / 10).min(total_frames);  // 15.0s tail end (~9.9s duration)
 
-    // 2. Search backward from the peak crack (up to 3 seconds) for the pre-rumble onset
-    // where audio rises above ambient background floor (0.08 of full scale)
-    let ambient_threshold = (32768.0 * 0.08) as i16;
-    let pre_roll_frames = (sample_rate as usize * 600) / 1000; // 600ms pre-roll
-    let search_window = (sample_rate as usize * 3).min(peak_frame);
-    let search_start = peak_frame.saturating_sub(search_window);
-    let mut start_frame = peak_frame.saturating_sub(pre_roll_frames);
-
-    for f in search_start..peak_frame {
-        let is_over = raw[f * ch..(f + 1) * ch].iter().any(|&s| s.abs() >= ambient_threshold);
-        if is_over {
-            start_frame = f.saturating_sub(pre_roll_frames);
-            break;
-        }
-    }
-
-    // 3. Slice the buffer from start_frame
-    let mut sliced: Vec<i16> = raw[start_frame * ch..].to_vec();
+    let mut sliced: Vec<i16> = if end_frame > start_frame {
+        raw[start_frame * ch..end_frame * ch].to_vec()
+    } else {
+        raw
+    };
     let sliced_frames = sliced.len() / ch;
 
-    // 4. 40ms smooth cosine fade-in at onset (prevents click, skips ambient rain)
-    let attack_frames = ((sample_rate as usize * 40) / 1000).min(sliced_frames / 4);
+    // 1. 60ms smooth cosine attack at crack onset to prevent clicks and pre-rumble noise
+    let attack_frames = ((sample_rate as usize * 60) / 1000).min(sliced_frames / 4);
     for frame in 0..attack_frames {
         let t = frame as f32 / attack_frames as f32;
         let fade_in = (t * std::f32::consts::FRAC_PI_2).sin();
@@ -161,8 +141,8 @@ fn decode_faded_thunder(bytes: &'static [u8]) -> Option<AsmrBuffer> {
         }
     }
 
-    // 5. 1.2s smooth cosine fade-out at tail (natural thunder dissipation)
-    let release_frames = ((sample_rate as usize * 12) / 10).min(sliced_frames / 2);
+    // 2. 2.5s gentle cosine fade-out across the rolling atmospheric decay tail
+    let release_frames = ((sample_rate as usize * 25) / 10).min(sliced_frames / 2);
     let start_release = sliced_frames.saturating_sub(release_frames);
     for frame in 0..release_frames {
         let f_idx = start_release + frame;
@@ -755,6 +735,8 @@ pub fn run(is_cli: bool) {
             use crate::dsp::*;
             let mut prng = PRNG::new(0xdeadbeef);
             let mut thunder_cooldown: u32 = 0;
+            let mut prev_thunder_on = false;
+            let mut thunder_pending_initial = false;
             let mut wind_phase: f32 = 0.0;
             let mut rain_playing = false;
             let mut wind_playing = false;
@@ -823,7 +805,13 @@ pub fn run(is_cli: bool) {
                     prev_wind_vol = -1.0;
                 }
 
-                // Thunder (zero-allocation one-shot retrigger)
+                // Thunder (zero-allocation one-shot retrigger with prompt initial strike)
+                if thunder_on && !prev_thunder_on {
+                    thunder_pending_initial = true;
+                    thunder_cooldown = (0.35f32 / dt) as u32; // Strike promptly ~350ms after user enables
+                }
+                prev_thunder_on = thunder_on;
+
                 if thunder_cooldown > 0 { thunder_cooldown -= 1; }
 
                 if thunder_on {
@@ -832,7 +820,8 @@ pub fn run(is_cli: bool) {
                         let chance = prng.next_unit_f32();
                         let interval_secs = (120.0 - 1.08 * t_freq as f32).max(10.0);
                         let threshold = dt / interval_secs;
-                        if chance < threshold {
+                        if thunder_pending_initial || chance < threshold {
+                            thunder_pending_initial = false;
                             if let Some(buf) = get_thunder_buffer() {
                                 let src = ZeroCopySource {
                                     samples: buf.samples.clone(),
@@ -843,14 +832,18 @@ pub fn run(is_cli: bool) {
                                 thunder_sink.append(src);
                                 let t_vol = ASMR_THUNDER_VOL.load(Ordering::Relaxed) as f32 / 100.0;
                                 let t_int = ASMR_THUNDER_INT.load(Ordering::Relaxed) as f32 / 100.0;
-                                thunder_sink.set_volume(t_vol * t_int * m);
-                                let cd_secs = 3.0 + (100.0 - t_freq as f32) * 0.4;
+                                thunder_sink.set_volume(t_vol * t_int * m * 1.5);
+                                let cd_secs = 10.0 + (100.0 - t_freq as f32) * 0.4;
                                 thunder_cooldown = (cd_secs / dt) as u32;
                             }
                         }
                     }
-                } else if !thunder_sink.empty() {
-                    thunder_sink.clear();
+                } else {
+                    if !thunder_sink.empty() {
+                        thunder_sink.clear();
+                    }
+                    thunder_cooldown = 0;
+                    thunder_pending_initial = false;
                 }
 
                 // Sleep at end of iteration: ensures pause/stop executes with 0ms latency.

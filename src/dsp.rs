@@ -431,7 +431,8 @@ pub static ASMR_WIND_CUTOFF: AtomicU32 = AtomicU32::new(500);
 // ─── Procedural Natural Rain Synthesis (Acoustic Droplet Physics) ─────────────
 
 /// Individual physical water droplet voice.
-/// Synthesizes acoustic bubble/cavity resonance with upward micro-chirp and shock excitation.
+/// Models hydrodynamic liquid contact wave (half-sine pressure pulse with ZERO white noise)
+/// followed by liquid bubble/cavity resonance (Minnaert resonance) with upward micro-chirp.
 #[derive(Clone, Copy)]
 pub struct DropletVoice {
     pub active: bool,
@@ -439,10 +440,12 @@ pub struct DropletVoice {
     pub base_freq: f32,
     pub chirp_amp: f32,
     pub chirp_decay: f32,
-    pub amp: f32,
-    pub amp_decay: f32,
-    pub shock_amp: f32,
-    pub shock_decay: f32,
+    pub ring_amp: f32,
+    pub ring_decay: f32,
+    // Smooth hydrodynamic half-sine contact pulse (zero white noise)
+    pub impact_phase: f32,
+    pub impact_inc: f32,
+    pub impact_amp: f32,
     pub pan: f32,
 }
 
@@ -454,10 +457,11 @@ impl Default for DropletVoice {
             base_freq: 0.0,
             chirp_amp: 0.0,
             chirp_decay: 0.0,
-            amp: 0.0,
-            amp_decay: 0.0,
-            shock_amp: 0.0,
-            shock_decay: 0.0,
+            ring_amp: 0.0,
+            ring_decay: 0.0,
+            impact_phase: 0.0,
+            impact_inc: 0.0,
+            impact_amp: 0.0,
             pan: 0.5,
         }
     }
@@ -465,23 +469,19 @@ impl Default for DropletVoice {
 
 /// Real-time procedural rain engine implementing `rodio::Source`.
 /// Generates authentic, non-mechanical water droplets modeled from physical
-/// bubble/cavity resonance with upward micro-chirp and shock excitation.
+/// bubble/cavity resonance with upward micro-chirp and smooth hydrodynamic impacts.
 ///
 /// Features an organic temporal onset progression:
-/// - t in [0.0s, 2.0s]: pure sparse isolated droplets ("tip... tip... tip...") with zero background noise.
-/// - t in [2.0s, 5.5s]: smooth acceleration and gentle mist fade-in.
-/// - t > 5.5s: full steady rainfall responding dynamically to `ASMR_RAIN_DENS`.
+/// - t in [0.0s, 3.5s]: pure sparse isolated droplets ("tip... tip... tip...") with zero background noise.
+/// - t in [3.5s, 7.5s]: smooth acceleration into light shower.
+/// - t > 7.5s: full steady rainfall responding dynamically to `ASMR_RAIN_DENS`.
 pub struct ProceduralRain {
     sample_rate: f32,
     frame_count: u64,
     prng: PRNG,
-    voices: [DropletVoice; 16],
-    pink_l: f32,
-    pink_r: f32,
-    hpf_l: Biquad,
-    hpf_r: Biquad,
-    lpf_l: Biquad,
-    lpf_r: Biquad,
+    voices: [DropletVoice; 20],
+    spray_hpf_l: Biquad,
+    spray_hpf_r: Biquad,
     staged_right: f32,
     is_right: bool,
 }
@@ -493,13 +493,10 @@ impl ProceduralRain {
             sample_rate: sr,
             frame_count: 0,
             prng: PRNG::new(0x2026_c001),
-            voices: [DropletVoice::default(); 16],
-            pink_l: 0.0,
-            pink_r: 0.0,
-            hpf_l: Biquad::highpass(sr, 450.0, 0.707),
-            hpf_r: Biquad::highpass(sr, 450.0, 0.707),
-            lpf_l: Biquad::lowpass(sr, 3200.0, 0.707),
-            lpf_r: Biquad::lowpass(sr, 3200.0, 0.707),
+            voices: [DropletVoice::default(); 20],
+            // Highpass at 3400 Hz: eliminates all stationary motor drone (<1000 Hz) completely
+            spray_hpf_l: Biquad::highpass(sr, 3400.0, 0.707),
+            spray_hpf_r: Biquad::highpass(sr, 3400.0, 0.707),
             staged_right: 0.0,
             is_right: false,
         }
@@ -514,48 +511,44 @@ impl ProceduralRain {
                 best_idx = i;
                 break;
             }
-            let energy = v.amp + v.shock_amp;
-            if energy < min_energy {
-                min_energy = energy;
+            if v.ring_amp < min_energy {
+                min_energy = v.ring_amp;
                 best_idx = i;
             }
         }
 
         let roll = self.prng.next_unit_f32();
-        let (base_f, tau, shock_init, amp_init) = if roll < 0.60 {
-            // 60% Crisp small droplet ("tip") - 1750 to 2400 Hz
-            let f = 1750.0 + self.prng.next_unit_f32() * 650.0;
-            let t = 0.004 + self.prng.next_unit_f32() * 0.003; // 4 - 7 ms
-            let s = 0.42;
-            let a = 0.32 + self.prng.next_unit_f32() * 0.20;
-            (f, t, s, a)
-        } else if roll < 0.90 {
-            // 30% Medium hollow droplet ("plink") - 1100 to 1600 Hz
-            let f = 1100.0 + self.prng.next_unit_f32() * 500.0;
-            let t = 0.007 + self.prng.next_unit_f32() * 0.005; // 7 - 12 ms
-            let s = 0.28;
-            let a = 0.28 + self.prng.next_unit_f32() * 0.16;
-            (f, t, s, a)
+        // Warm, authentic liquid spectrum (zero harsh 2400Hz sizzle):
+        let (base_f, tau, impact_dur, impact_a, ring_a) = if roll < 0.50 {
+            // 50% Organic Leaf/Window "Tip" - 520 to 820 Hz (clear liquid droplet)
+            let f = 520.0 + self.prng.next_unit_f32() * 300.0;
+            let t = 0.009 + self.prng.next_unit_f32() * 0.005; // 9 - 14 ms
+            (f, t, 0.0016, 0.16, 0.28)
+        } else if roll < 0.85 {
+            // 35% Hollow Resonant "Plink" - 380 to 520 Hz (puddle cavity ring)
+            let f = 380.0 + self.prng.next_unit_f32() * 140.0;
+            let t = 0.012 + self.prng.next_unit_f32() * 0.006; // 12 - 18 ms
+            (f, t, 0.0022, 0.22, 0.34)
         } else {
-            // 10% Deep fat droplet ("plop") - 650 to 970 Hz
-            let f = 650.0 + self.prng.next_unit_f32() * 320.0;
-            let t = 0.012 + self.prng.next_unit_f32() * 0.008; // 12 - 20 ms
-            let s = 0.18;
-            let a = 0.22 + self.prng.next_unit_f32() * 0.14;
-            (f, t, s, a)
+            // 15% Deep Surface "Plop / Thump" - 240 to 380 Hz (fat drop)
+            let f = 240.0 + self.prng.next_unit_f32() * 140.0;
+            let t = 0.016 + self.prng.next_unit_f32() * 0.008; // 16 - 24 ms
+            (f, t, 0.0028, 0.28, 0.38)
         };
 
         let voice = &mut self.voices[best_idx];
         voice.active = true;
         voice.phase = 0.0;
         voice.base_freq = base_f;
-        voice.chirp_amp = 0.15; // +15% upward pitch chirp on impact
-        voice.chirp_decay = (-1.0 / (sr * 0.0015)).exp(); // decays in 1.5ms
-        voice.amp = amp_init;
-        voice.amp_decay = (-1.0 / (sr * tau)).exp();
-        voice.shock_amp = shock_init;
-        voice.shock_decay = (-1.0 / (sr * 0.00035)).exp(); // shock transient lasts ~0.35ms
-        voice.pan = 0.15 + self.prng.next_unit_f32() * 0.70; // 0.15 to 0.85 stereo spread
+        voice.chirp_amp = 0.12; // +12% upward liquid chirp on impact
+        voice.chirp_decay = (-1.0 / (sr * 0.0025)).exp(); // decays in 2.5ms
+        voice.ring_amp = ring_a * (0.85 + self.prng.next_unit_f32() * 0.30);
+        voice.ring_decay = (-1.0 / (sr * tau)).exp();
+
+        voice.impact_phase = 0.0;
+        voice.impact_inc = std::f32::consts::PI / (sr * impact_dur);
+        voice.impact_amp = impact_a * (0.85 + self.prng.next_unit_f32() * 0.30);
+        voice.pan = 0.18 + self.prng.next_unit_f32() * 0.64;
     }
 
     /// Computes the next stereo frame (left, right).
@@ -566,24 +559,26 @@ impl ProceduralRain {
 
         // Current user density setting [0.0, 1.0]
         let dens = (ASMR_RAIN_DENS.load(Ordering::Relaxed) as f32 / 100.0).clamp(0.0, 1.0);
-        let steady_lambda = 65.0 + dens * 175.0; // 65 - 240 drops/sec at steady state
+        let steady_lambda = 45.0 + dens * 110.0; // 45 - 155 drops/sec at steady state
 
-        // Three-stage onset timeline progression
-        let (lambda, mist_gain) = if t < 2.0 {
-            // Stage 1: Sparse isolated drops ("tip... tip... tip...")
-            // Pure silence between individual droplet strikes.
-            let sparse_rate = 2.4 + (t / 2.0) * 1.6; // 2.4 -> 4.0 drops/s
-            (sparse_rate, 0.0f32)
-        } else if t < 5.5 {
-            // Stage 2: Smootherstep acceleration and gentle mist fade-in
-            let u = (t - 2.0) / 3.5;
-            let s = u * u * u * (u * (u * 6.0 - 15.0) + 10.0);
-            let rate = 4.0 + s * (steady_lambda - 4.0);
-            let mist = s * (0.04 + dens * 0.05); // 0.0 -> max 0.09
-            (rate, mist)
+        // Three-stage onset timeline progression:
+        // Stage 1: t in [0.0s, 3.5s] -> Isolated, peaceful drops ("tip... tip... tip...")
+        //          Arrival rate starts at 0.8 drops/s, gently rising to 2.2 drops/s.
+        //          Absolute silence between droplets (zero background noise).
+        // Stage 2: t in [3.5s, 7.5s] -> Smoothstep progression into rain shower.
+        // Stage 3: t > 7.5s -> Full steady rainfall.
+        let (lambda, spray_gain) = if t < 3.5 {
+            let p = t / 3.5;
+            let rate = 0.8 + p * 1.4; // 0.8 -> 2.2 drops/sec
+            (rate, 0.0f32)
+        } else if t < 7.5 {
+            let u = (t - 3.5) / 4.0;
+            let s = u * u * (3.0 - 2.0 * u);
+            let rate = 2.2 + s * (steady_lambda - 2.2);
+            let spray = s * (0.015 + dens * 0.025);
+            (rate, spray)
         } else {
-            // Stage 3: Steady-state authentic rain shower
-            (steady_lambda, 0.04 + dens * 0.05)
+            (steady_lambda, 0.015 + dens * 0.025)
         };
 
         // Stochastic Poisson arrival check
@@ -592,7 +587,7 @@ impl ProceduralRain {
             self.trigger_droplet(sr);
         }
 
-        // Render active physical droplet voices
+        // Render active organic droplet voices
         let mut drop_l = 0.0f32;
         let mut drop_r = 0.0f32;
 
@@ -601,52 +596,48 @@ impl ProceduralRain {
                 continue;
             }
 
-            // Impact shock transient (short high-frequency click)
-            let shock = if v.shock_amp > 0.001 {
-                let s = v.shock_amp * (self.prng.next_f32() * 0.6);
-                v.shock_amp *= v.shock_decay;
-                s
+            // 1. Smooth hydrodynamic contact impulse (half-sine wave, zero white noise)
+            let impact = if v.impact_phase < std::f32::consts::PI {
+                let p = v.impact_phase.sin() * v.impact_amp;
+                v.impact_phase += v.impact_inc;
+                p
             } else {
                 0.0
             };
 
-            // Cavity/bubble resonance ringdown
+            // 2. Cavity/bubble resonance ringdown (Minnaert liquid resonance)
             let cur_freq = v.base_freq * (1.0 + v.chirp_amp);
             v.chirp_amp *= v.chirp_decay;
 
-            let ring = v.phase.sin() * v.amp;
+            let ring = v.phase.sin() * v.ring_amp;
             v.phase += 2.0 * std::f32::consts::PI * cur_freq / sr;
             if v.phase > 2.0 * std::f32::consts::PI {
                 v.phase -= 2.0 * std::f32::consts::PI;
             }
-            v.amp *= v.amp_decay;
+            v.ring_amp *= v.ring_decay;
 
-            let sample = shock + ring;
+            let sample = impact + ring;
             drop_l += sample * (1.0 - v.pan);
             drop_r += sample * v.pan;
 
-            if v.amp < 0.0002 && v.shock_amp < 0.001 {
+            if v.ring_amp < 0.0005 && v.impact_phase >= std::f32::consts::PI {
                 v.active = false;
             }
         }
 
-        // Render background mist bed (only if mist_gain > 0)
-        let (bed_l, bed_r) = if mist_gain > 0.001 {
-            let white_l = self.prng.next_f32();
-            let white_r = self.prng.next_f32();
-            self.pink_l = 0.88 * self.pink_l + 0.12 * white_l;
-            self.pink_r = 0.88 * self.pink_r + 0.12 * white_r;
-
-            let filtered_l = self.lpf_l.process(self.hpf_l.process(self.pink_l));
-            let filtered_r = self.lpf_r.process(self.hpf_r.process(self.pink_r));
-            (filtered_l * mist_gain * 0.40, filtered_r * mist_gain * 0.40)
+        // Delicate airborne micro-spray (>3.4kHz only, ZERO stationary engine drone)
+        let (spray_l, spray_r) = if spray_gain > 0.0001 {
+            let tick_l = if self.prng.next_unit_f32() < 0.10 { self.prng.next_f32() } else { 0.0 };
+            let tick_r = if self.prng.next_unit_f32() < 0.10 { self.prng.next_f32() } else { 0.0 };
+            let hp_l = self.spray_hpf_l.process(tick_l) * spray_gain;
+            let hp_r = self.spray_hpf_r.process(tick_r) * spray_gain;
+            (hp_l, hp_r)
         } else {
             (0.0, 0.0)
         };
 
-        // Combine: Droplets dominate (>85%), mist is subtle background
-        let out_l = soft_limit(drop_l * 0.85 + bed_l);
-        let out_r = soft_limit(drop_r * 0.85 + bed_r);
+        let out_l = soft_limit(drop_l + spray_l);
+        let out_r = soft_limit(drop_r + spray_r);
 
         self.frame_count += 1;
         (out_l, out_r)

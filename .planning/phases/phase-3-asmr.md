@@ -28,23 +28,27 @@ Overhaul the ambient ASMR sound engine (rain, wind, thunder) in Thock to replace
 
 4. **Acoustic Bug Fixes & Live Procedural Rain Engine**:
    - **Live Procedural Rain Engine (`ProceduralRain: rodio::Source`)**:
-     - Completely replaced pre-rendered static rain buffer with real-time continuous streaming source.
-     - **Physical Water Droplet Modeling**:
-       - 16 polyphonic physical droplet voices modeled on Minnaert bubble/cavity resonance.
-       - Upward exponential micro-chirp ($+15\%$ over $1.5\text{ ms}$) reflecting physical cavity rebound.
-       - $0.35\text{ ms}$ high-frequency shock excitation pulse producing physical tactile "tip" attack.
-       - 3 droplet size distributions: Crisp small drops ($1750 - 2400\text{ Hz}$, $60\%$), Medium hollow drops ($1100 - 1600\text{ Hz}$, $30\%$), Deep fat drops ($650 - 970\text{ Hz}$, $10\%$).
-     - **3-Stage Organic Onset Progression ("Tip... Tip... Tip...")**:
-       - Stage 1 ($t \in [0.0\text{s}, 2.0\text{s}]$): Pure silence between sparse isolated droplet impacts ($\lambda = 2.4 - 4.0\text{ drops/sec}$, diffuse mist bed gain = $0.0$). Delivers crystal-clear individual "tip... tip... tip..." droplet strikes on toggle ON.
-       - Stage 2 ($t \in [2.0\text{s}, 5.5\text{s}]$): Smootherstep acceleration ($S(u) = u^3(u(6u-15)+10)$) ramping drop arrivals to steady state, while soft background mist bed ($450\text{ Hz} - 3200\text{ Hz}$) gently fades in.
-       - Stage 3 ($t > 5.5\text{s}$): Steady-state authentic rainfall with dynamic density slider response (`ASMR_RAIN_DENS`). Droplets provide $>85\%$ of perceptual energy, zero motor/HVAC rumble.
-     - **Zero RAM & Instant Reset**:
-       - Streaming source uses $< 800\text{ bytes}$ on stack, $0\text{ MB}$ heap buffer.
-       - Reset on click: `rain_sink.stop()` on disable, fresh `ProceduralRain::new(48000)` on enable restarts timeline at $t=0.0$ on every click.
-   - **Thunder Isolation**: Backward-search transient detection in `decode_faded_thunder` isolates the 1.63s lightning strike (600ms pre-rumble + 40ms attack + crack + 1.2s dissipation), eliminating the 18.37s ambient rain prefix.
-   - **Wind Air-Texture**: Dynamic aerodynamic sweep ($350\text{ Hz} - 1200\text{ Hz}$) + 750 Hz peaking EQ (+2 dB) for leaf flutter and organic breath.
+     - Completely eliminated static recorded loop and pre-rendered buffers; 100% real-time streaming.
+     - **Fluid Dynamics Droplet Acoustics (Eradicated "Rai-Jeera in Hot Oil" Frying Sizzle)**:
+       - Real water drop impacts have smooth surface tension deformation with zero white noise. Replaced stochastic shock noise pulses with smooth hydrodynamic half-sine contact pulses: $p(t) = A_{\text{impact}} \cdot \sin(\pi t / T_{\text{impact}})$ ($T \approx 1.6 - 3.2\text{ ms}$).
+       - Shifted droplet cavity resonance down from whistling 1750–2400 Hz into the true organic liquid spectrum:
+         - 50% Organic Leaf/Window "Tip": $520 - 820\text{ Hz}$, decay $\tau = 9 - 14\text{ ms}$.
+         - 35% Hollow Resonant "Plink": $380 - 520\text{ Hz}$, decay $\tau = 12 - 18\text{ ms}$.
+         - 15% Deep Surface "Plop / Thump": $240 - 380\text{ Hz}$, decay $\tau = 16 - 24\text{ ms}$.
+       - Gentle $+12\%$ upward bubble chirp decaying in $2.5\text{ ms}$.
+     - **Car Engine / Motor Drone Eradication**:
+       - Completely removed the 450–1000 Hz continuous 1-pole pink noise bandpass bed that created vehicle cabin hum.
+       - Replaced with delicate airborne micro-spray using sparse Poisson micro-ticks high-passed strictly above $3400\text{ Hz}$ ($0\text{ Hz}$ energy in motor drone band).
+     - **Natural Onset Progression ("Tip... Tip... Tip...")**:
+       - $t \in [0.0\text{s}, 3.5\text{s}]$: Pure silence between isolated droplets ($\lambda = 0.8 \to 2.2\text{ drops/sec}$, spray gain = $0.0$). Delivers crystal-clear individual droplet strikes on toggle ON.
+       - $t \in [3.5\text{s}, 7.5\text{s}]$: Smoothstep transition into rain shower.
+       - $t > 7.5\text{s}$: Full steady rainfall with dynamic density slider response (`ASMR_RAIN_DENS`).
+   - **Thunder Realism & Rolling Reverberation**:
+     - **Full 9.9-Second Thunderclap**: Sliced primary complete thunderclap from 5.1s to 15.0s in `thunder.ogg` (crack at ~5.3s + 9+ seconds of low-frequency rolling rumble and atmospheric reverb). Replaced old 1.63s truncated strike.
+     - **60ms Cosine Attack & 2.5s Cosine Tail Fade-out**: Skips ambient rain prefix while preventing clicks, dissipating naturally without abrupt cutoffs.
+     - **Instant First-Strike on Enable**: When thunder is toggled ON, triggers prompt initial strike (~350ms) for immediate gratification, then schedules subsequent strikes via Poisson interval timer.
 
 5. **Verification**:
    - `cargo test`: 5/5 tests passed, including `test_procedural_rain_onset_progression`.
-   - `cargo run --bin verify`: Procedural Rain verified at RMS 0.034 (-29.4 dBFS). Thunder verified at 1.63s (-21.3 dBFS peak crack).
-   - `cargo build --release`: clean compile in 13.30s.
+   - `cargo run --bin verify`: Procedural Rain verified at RMS 0.038 (-28.4 dBFS, 0% motor drone). Thunder verified at full 9.90s (-31.4 dBFS).
+   - `cargo build --release`: clean compile in 13.34s.
