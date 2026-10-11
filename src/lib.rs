@@ -59,6 +59,110 @@ use core_graphics::event::{CGEventTap, CGEventTapLocation, CGEventTapPlacement, 
 use core_foundation::runloop::CFRunLoop;
 use rodio::{Decoder, OutputStream, Sink, Source};
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum AsmrLoopKind {
+    Rain,
+    Wind,
+}
+
+pub struct AsmrBuffer {
+    pub samples: std::sync::Arc<[i16]>,
+    pub channels: u16,
+    pub sample_rate: u32,
+}
+
+static RAIN_OGG: &[u8] = include_bytes!("../assets/asmr/rain.ogg");
+static WIND_OGG: &[u8] = include_bytes!("../assets/asmr/wind.ogg");
+static THUNDER_OGG: &[u8] = include_bytes!("../assets/asmr/thunder.ogg");
+
+fn decode_crossfaded(bytes: &'static [u8]) -> Option<AsmrBuffer> {
+    let cursor = std::io::Cursor::new(bytes);
+    let decoder = Decoder::new(cursor).ok()?;
+    let channels = decoder.channels();
+    let sample_rate = decoder.sample_rate();
+    let mut raw: Vec<i16> = rodio::Source::convert_samples::<i16>(decoder).collect();
+    let ch = channels as usize;
+    let total_frames = raw.len() / ch;
+    // 0.5s cosine equal-power crossfade between discarded tail and head
+    let xfade_frames = ((sample_rate as usize) / 2).min(total_frames / 4);
+    if total_frames > xfade_frames * 2 && xfade_frames > 0 {
+        let loop_frames = total_frames - xfade_frames;
+        for frame in 0..xfade_frames {
+            let tail_frame = loop_frames + frame;
+            let t = frame as f32 / xfade_frames as f32;
+            let fade_out = (t * std::f32::consts::FRAC_PI_2).cos();
+            let fade_in = (t * std::f32::consts::FRAC_PI_2).sin();
+            for c in 0..ch {
+                let tail_val = raw[tail_frame * ch + c] as f32;
+                let head_val = raw[frame * ch + c] as f32;
+                let blended = (fade_out * tail_val + fade_in * head_val).clamp(-32768.0, 32767.0) as i16;
+                raw[frame * ch + c] = blended;
+            }
+        }
+        raw.truncate(loop_frames * ch);
+    }
+    Some(AsmrBuffer {
+        samples: std::sync::Arc::from(raw.into_boxed_slice()),
+        channels,
+        sample_rate,
+    })
+}
+
+fn decode_faded_thunder(bytes: &'static [u8]) -> Option<AsmrBuffer> {
+    let cursor = std::io::Cursor::new(bytes);
+    let decoder = Decoder::new(cursor).ok()?;
+    let channels = decoder.channels();
+    let sample_rate = decoder.sample_rate();
+    let mut raw: Vec<i16> = rodio::Source::convert_samples::<i16>(decoder).collect();
+    let ch = channels as usize;
+    let total_frames = raw.len() / ch;
+
+    // 80ms smooth cosine fade-in at head (prevents initial click)
+    let attack_frames = ((sample_rate as usize * 80) / 1000).min(total_frames / 4);
+    for frame in 0..attack_frames {
+        let t = frame as f32 / attack_frames as f32;
+        let fade_in = (t * std::f32::consts::FRAC_PI_2).sin();
+        for c in 0..ch {
+            let idx = frame * ch + c;
+            raw[idx] = (raw[idx] as f32 * fade_in) as i16;
+        }
+    }
+
+    // 1.0s smooth cosine fade-out at tail (prevents end truncation pop)
+    let release_frames = (sample_rate as usize).min(total_frames / 2);
+    let start_release = total_frames.saturating_sub(release_frames);
+    for frame in 0..release_frames {
+        let f_idx = start_release + frame;
+        let t = frame as f32 / release_frames as f32;
+        let fade_out = ((1.0 - t) * std::f32::consts::FRAC_PI_2).sin();
+        for c in 0..ch {
+            let idx = f_idx * ch + c;
+            raw[idx] = (raw[idx] as f32 * fade_out) as i16;
+        }
+    }
+
+    Some(AsmrBuffer {
+        samples: std::sync::Arc::from(raw.into_boxed_slice()),
+        channels,
+        sample_rate,
+    })
+}
+
+fn get_rain_buffer() -> Option<&'static AsmrBuffer> {
+    static CACHE: std::sync::OnceLock<Option<AsmrBuffer>> = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| decode_crossfaded(RAIN_OGG)).as_ref()
+}
+
+fn get_wind_buffer() -> Option<&'static AsmrBuffer> {
+    static CACHE: std::sync::OnceLock<Option<AsmrBuffer>> = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| decode_crossfaded(WIND_OGG)).as_ref()
+}
+
+fn get_thunder_buffer() -> Option<&'static AsmrBuffer> {
+    static CACHE: std::sync::OnceLock<Option<AsmrBuffer>> = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| decode_faded_thunder(THUNDER_OGG)).as_ref()
+}
+
 pub struct SeamlessLoopSource {
     samples: std::sync::Arc<[i16]>,
     channels: u16,
@@ -66,57 +170,46 @@ pub struct SeamlessLoopSource {
     cursor: usize,
     filter_left: Option<crate::dsp::Biquad>,
     filter_right: Option<crate::dsp::Biquad>,
-    is_rain: bool,
+    warmth_left: Option<crate::dsp::Biquad>,
+    warmth_right: Option<crate::dsp::Biquad>,
+    kind: AsmrLoopKind,
 }
 
 impl SeamlessLoopSource {
-    pub fn new_crossfaded(bytes: &'static [u8], is_rain: bool) -> Result<Self, rodio::decoder::DecoderError> {
-        let cursor = std::io::Cursor::new(bytes);
-        let decoder = Decoder::new(cursor)?;
-        let channels = decoder.channels();
-        let sample_rate = decoder.sample_rate();
-        let mut raw: Vec<i16> = rodio::Source::convert_samples::<i16>(decoder).collect();
-        let ch = channels as usize;
-        let total_frames = raw.len() / ch;
-        // 0.5s cosine equal-power crossfade between discarded tail and head
-        let xfade_frames = ((sample_rate as usize) / 2).min(total_frames / 4);
-        if total_frames > xfade_frames * 2 && xfade_frames > 0 {
-            let loop_frames = total_frames - xfade_frames;
-            for frame in 0..xfade_frames {
-                let tail_frame = loop_frames + frame;
-                let t = frame as f32 / xfade_frames as f32;
-                let fade_out = (t * std::f32::consts::FRAC_PI_2).cos();
-                let fade_in = (t * std::f32::consts::FRAC_PI_2).sin();
-                for c in 0..ch {
-                    let tail_val = raw[tail_frame * ch + c] as f32;
-                    let head_val = raw[frame * ch + c] as f32;
-                    let blended = (fade_out * tail_val + fade_in * head_val).clamp(-32768.0, 32767.0) as i16;
-                    raw[frame * ch + c] = blended;
-                }
+    pub fn new(samples: std::sync::Arc<[i16]>, channels: u16, sample_rate: u32, kind: AsmrLoopKind) -> Self {
+        let (filter_left, filter_right, warmth_left, warmth_right) = match kind {
+            AsmrLoopKind::Rain => {
+                let dens = crate::dsp::ASMR_RAIN_DENS.load(Ordering::Relaxed) as f32 / 100.0;
+                let fc = 650.0 + dens * 1350.0;
+                (
+                    Some(crate::dsp::Biquad::lowpass(sample_rate as f32, fc * 0.97, 0.707)),
+                    Some(crate::dsp::Biquad::lowpass(sample_rate as f32, fc * 1.03, 0.707)),
+                    Some(crate::dsp::Biquad::peaking(sample_rate as f32, 320.0, 1.2, 3.5)),
+                    Some(crate::dsp::Biquad::peaking(sample_rate as f32, 320.0, 1.2, 3.5)),
+                )
             }
-            raw.truncate(loop_frames * ch);
-        }
-
-        let (filter_left, filter_right) = if is_rain {
-            let dens = crate::dsp::ASMR_RAIN_DENS.load(Ordering::Relaxed) as f32 / 100.0;
-            let fc = 2400.0 + dens * 2600.0;
-            (
-                Some(crate::dsp::Biquad::lowpass(sample_rate as f32, fc, 0.707)),
-                Some(crate::dsp::Biquad::lowpass(sample_rate as f32, fc, 0.707)),
-            )
-        } else {
-            (None, None)
+            AsmrLoopKind::Wind => {
+                let fc = (crate::dsp::ASMR_WIND_CUTOFF.load(Ordering::Relaxed) as f32).clamp(180.0, 600.0);
+                (
+                    Some(crate::dsp::Biquad::lowpass(sample_rate as f32, fc * 0.95, 0.85)),
+                    Some(crate::dsp::Biquad::lowpass(sample_rate as f32, fc * 1.05, 0.85)),
+                    None,
+                    None,
+                )
+            }
         };
 
-        Ok(Self {
-            samples: std::sync::Arc::from(raw.into_boxed_slice()),
+        Self {
+            samples,
             channels,
             sample_rate,
             cursor: 0,
             filter_left,
             filter_right,
-            is_rain,
-        })
+            warmth_left,
+            warmth_right,
+            kind,
+        }
     }
 }
 
@@ -129,24 +222,60 @@ impl Iterator for SeamlessLoopSource {
         let ch_idx = self.cursor % self.channels as usize;
         let mut sample = self.samples[self.cursor] as f32 / 32768.0;
 
-        if self.is_rain {
-            if self.cursor == 0 {
-                let dens = crate::dsp::ASMR_RAIN_DENS.load(Ordering::Relaxed) as f32 / 100.0;
-                let fc = 2400.0 + dens * 2600.0;
-                self.filter_left = Some(crate::dsp::Biquad::lowpass(self.sample_rate as f32, fc, 0.707));
-                self.filter_right = Some(crate::dsp::Biquad::lowpass(self.sample_rate as f32, fc, 0.707));
-            }
-            if ch_idx == 0 {
-                if let Some(fl) = &mut self.filter_left {
-                    sample = fl.process(sample);
+        match self.kind {
+            AsmrLoopKind::Rain => {
+                // Update tone filter every 128 frames (~2.67ms @ 48kHz) preserving filter state
+                if ch_idx == 0 && (self.cursor & 127) == 0 {
+                    let dens = crate::dsp::ASMR_RAIN_DENS.load(Ordering::Relaxed) as f32 / 100.0;
+                    let fc = 650.0 + dens * 1350.0;
+                    if let Some(fl) = &mut self.filter_left {
+                        fl.update_lowpass(self.sample_rate as f32, fc * 0.97, 0.707);
+                    }
+                    if let Some(fr) = &mut self.filter_right {
+                        fr.update_lowpass(self.sample_rate as f32, fc * 1.03, 0.707);
+                    }
                 }
-            } else {
-                if let Some(fr) = &mut self.filter_right {
-                    sample = fr.process(sample);
+
+                if ch_idx == 0 {
+                    if let Some(fl) = &mut self.filter_left {
+                        sample = fl.process(sample);
+                    }
+                    if let Some(wl) = &mut self.warmth_left {
+                        sample = wl.process(sample);
+                    }
+                } else {
+                    if let Some(fr) = &mut self.filter_right {
+                        sample = fr.process(sample);
+                    }
+                    if let Some(wr) = &mut self.warmth_right {
+                        sample = wr.process(sample);
+                    }
                 }
+                sample = crate::dsp::soft_limit(sample * 1.25);
             }
-            // Makeup gain (+3 dB) for pleasant listening balance
-            sample *= 1.41;
+            AsmrLoopKind::Wind => {
+                // Update aerodynamic lowpass filter tracking dynamic gust cutoff
+                if ch_idx == 0 && (self.cursor & 127) == 0 {
+                    let fc = (crate::dsp::ASMR_WIND_CUTOFF.load(Ordering::Relaxed) as f32).clamp(180.0, 600.0);
+                    if let Some(fl) = &mut self.filter_left {
+                        fl.update_lowpass(self.sample_rate as f32, fc * 0.95, 0.85);
+                    }
+                    if let Some(fr) = &mut self.filter_right {
+                        fr.update_lowpass(self.sample_rate as f32, fc * 1.05, 0.85);
+                    }
+                }
+
+                if ch_idx == 0 {
+                    if let Some(fl) = &mut self.filter_left {
+                        sample = fl.process(sample);
+                    }
+                } else {
+                    if let Some(fr) = &mut self.filter_right {
+                        sample = fr.process(sample);
+                    }
+                }
+                sample = crate::dsp::soft_limit(sample * 1.15);
+            }
         }
 
         self.cursor += 1;
@@ -554,11 +683,6 @@ pub fn run(is_cli: bool) {
             }
         };
         // ── ASMR: three independent real-audio layers ────────────────────────
-        // Embedded files compiled into the binary.
-        static RAIN_OGG: &[u8] = include_bytes!("../assets/asmr/rain.ogg");
-        static WIND_OGG: &[u8] = include_bytes!("../assets/asmr/wind.ogg");
-        static THUNDER_OGG: &[u8] = include_bytes!("../assets/asmr/thunder.ogg");
-
         // Rain sink — starts empty and paused (lazy load on enable)
         let rain_sink = Sink::try_new(&handle).unwrap_or_else(|_| {
             eprintln!("ASMR Rain: could not create sink");
@@ -587,104 +711,113 @@ pub fn run(is_cli: bool) {
         let _asmr_ctrl = std::thread::Builder::new().stack_size(32 * 1024).spawn(move || {
             use std::sync::atomic::Ordering;
             use crate::dsp::*;
-            let mut rng_seed: u32 = 0xdeadbeef;
+            let mut prng = PRNG::new(0xdeadbeef);
             let mut thunder_cooldown: u32 = 0;
+            let mut wind_phase: f32 = 0.0;
+            let mut rain_playing = false;
+            let mut wind_playing = false;
+            let mut prev_rain_vol = -1.0f32;
+            let mut prev_wind_vol = -1.0f32;
+
             loop {
                 let rain_on = ASMR_RAIN_ON.load(Ordering::Relaxed) != 0;
-                let wind_on_q = ASMR_WIND_ON.load(Ordering::Relaxed) != 0;
-                let thunder_on_q = ASMR_THUNDER_ON.load(Ordering::Relaxed) != 0;
-                // When all layers are off, sleep much longer to avoid spinning 20x/sec
-                let sleep_ms = if !rain_on && !wind_on_q && !thunder_on_q { 500 } else { 50 };
-                std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
+                let wind_on = ASMR_WIND_ON.load(Ordering::Relaxed) != 0;
+                let thunder_on = ASMR_THUNDER_ON.load(Ordering::Relaxed) != 0;
+                let any_active = rain_on || wind_on || thunder_on;
 
                 let m = ASMR_MASTER_VOL.load(Ordering::Relaxed) as f32 / 100.0;
+                let dt = 0.030f32; // 30ms (33.3 Hz) for silky-smooth envelope
 
-                // Rain (warm, gentle, dynamically filtered)
-                let rain_on = ASMR_RAIN_ON.load(Ordering::Relaxed) != 0;
-                let rain_v = ASMR_RAIN_VOL.load(Ordering::Relaxed) as f32 / 100.0;
+                // Rain (warm, gentle, dynamically filtered with binaural stereo & peaking warmth EQ)
                 if rain_on {
                     if rain_sink.empty() {
-                        if let Ok(src) = SeamlessLoopSource::new_crossfaded(RAIN_OGG, true) {
-                            rain_sink.append(src);
+                        if let Some(buf) = get_rain_buffer() {
+                            rain_sink.append(SeamlessLoopSource::new(buf.samples.clone(), buf.channels, buf.sample_rate, AsmrLoopKind::Rain));
                         }
                     }
-                    rain_sink.play();
-                    rain_sink.set_volume(rain_v * m * 0.85);
-                } else {
+                    if !rain_playing {
+                        rain_sink.play();
+                        rain_playing = true;
+                    }
+                    let rain_v = ASMR_RAIN_VOL.load(Ordering::Relaxed) as f32 / 100.0;
+                    let target = rain_v * m * 0.85;
+                    if (target - prev_rain_vol).abs() > 0.002 {
+                        rain_sink.set_volume(target);
+                        prev_rain_vol = target;
+                    }
+                } else if rain_playing {
                     rain_sink.pause();
+                    rain_playing = false;
+                    prev_rain_vol = -1.0;
                 }
 
-                // Wind (organic breathing gusts via dual-sine LFO)
-                let wind_on = ASMR_WIND_ON.load(Ordering::Relaxed) != 0;
-                let wind_v = ASMR_WIND_VOL.load(Ordering::Relaxed) as f32 / 100.0;
-                let wind_gust = ASMR_WIND_GUST.load(Ordering::Relaxed) as f32 / 100.0;
-                let lfo = 0.6 * (rng_seed as f32 * 0.00000005 * 0.449).sin() + 0.4 * (rng_seed as f32 * 0.00000005 * 0.739).sin();
-                let gust_mult = 1.0 + (wind_gust * 0.35) * lfo;
+                // Wind (organic breathing gusts via dual-sine LFO + aerodynamic cutoff)
                 if wind_on {
                     if wind_sink.empty() {
-                        if let Ok(src) = SeamlessLoopSource::new_crossfaded(WIND_OGG, false) {
-                            wind_sink.append(src);
+                        if let Some(buf) = get_wind_buffer() {
+                            wind_sink.append(SeamlessLoopSource::new(buf.samples.clone(), buf.channels, buf.sample_rate, AsmrLoopKind::Wind));
                         }
                     }
-                    wind_sink.play();
-                    wind_sink.set_volume(wind_v * gust_mult * m * 0.75);
-                } else {
+                    if !wind_playing {
+                        wind_sink.play();
+                        wind_playing = true;
+                    }
+                    wind_phase += dt;
+                    if wind_phase > 65536.0 { wind_phase = 0.0; }
+                    let wind_v = ASMR_WIND_VOL.load(Ordering::Relaxed) as f32 / 100.0;
+                    let wind_gust = ASMR_WIND_GUST.load(Ordering::Relaxed) as f32 / 100.0;
+                    let lfo = 0.6 * (wind_phase * 0.449).sin() + 0.4 * (wind_phase * 0.739).sin();
+                    let gust_mult = (1.0 + (wind_gust * 0.35) * lfo).max(0.0);
+                    
+                    // Modulate aerodynamic cutoff frequency
+                    let wind_fc = 220.0 + 260.0 * ((gust_mult - 0.75).clamp(0.0, 1.0));
+                    ASMR_WIND_CUTOFF.store(wind_fc as u32, Ordering::Relaxed);
+
+                    let target = wind_v * gust_mult * m * 0.75;
+                    if (target - prev_wind_vol).abs() > 0.002 {
+                        wind_sink.set_volume(target);
+                        prev_wind_vol = target;
+                    }
+                } else if wind_playing {
                     wind_sink.pause();
+                    wind_playing = false;
+                    prev_wind_vol = -1.0;
                 }
 
-                // Thunder — retrigger one-shot randomly with tail fade-out
-                let thunder_on = ASMR_THUNDER_ON.load(Ordering::Relaxed) != 0;
-                let t_vol = ASMR_THUNDER_VOL.load(Ordering::Relaxed) as f32 / 100.0;
-                let t_freq = ASMR_THUNDER_FREQ.load(Ordering::Relaxed);
-
+                // Thunder (zero-allocation one-shot retrigger)
                 if thunder_cooldown > 0 { thunder_cooldown -= 1; }
 
-                if thunder_on && thunder_cooldown == 0 && thunder_sink.empty() {
-                    rng_seed ^= rng_seed << 13;
-                    rng_seed ^= rng_seed >> 17;
-                    rng_seed ^= rng_seed << 5;
-                    let chance = (rng_seed as f32 / u32::MAX as f32).abs();
-                    // realistic ambient interval (every 120s down to 12s)
-                    let threshold = 1.0 / ((120.0 - 1.08 * t_freq as f32) * 20.0).max(10.0);
-                    if chance < threshold {
-                        match Decoder::new(std::io::Cursor::new(THUNDER_OGG)) {
-                            Ok(decoder) => {
-                                let channels = decoder.channels();
-                                let sr = decoder.sample_rate();
-                                let mut samples: Vec<i16> = rodio::Source::convert_samples::<i16>(decoder).collect();
-                                // 0.5s cosine fade-out at tail (seconds 19.5-20.0) eliminates truncation pop
-                                let fade_samples = ((sr as usize) / 2) * channels as usize;
-                                let len = samples.len();
-                                if len > fade_samples {
-                                    for (i, s) in samples[len - fade_samples..].iter_mut().enumerate() {
-                                        let alpha = (fade_samples - i) as f32 / fade_samples as f32;
-                                        *s = (*s as f32 * alpha) as i16;
-                                    }
-                                }
+                if thunder_on {
+                    if thunder_cooldown == 0 && thunder_sink.empty() {
+                        let t_freq = ASMR_THUNDER_FREQ.load(Ordering::Relaxed);
+                        let chance = prng.next_unit_f32();
+                        let interval_secs = (120.0 - 1.08 * t_freq as f32).max(10.0);
+                        let threshold = dt / interval_secs;
+                        if chance < threshold {
+                            if let Some(buf) = get_thunder_buffer() {
                                 let src = ZeroCopySource {
-                                    samples: Arc::from(samples.into_boxed_slice()),
-                                    channels,
-                                    sample_rate: sr,
+                                    samples: buf.samples.clone(),
+                                    channels: buf.channels,
+                                    sample_rate: buf.sample_rate,
                                     cursor: 0,
                                 };
                                 thunder_sink.append(src);
+                                let t_vol = ASMR_THUNDER_VOL.load(Ordering::Relaxed) as f32 / 100.0;
                                 let t_int = ASMR_THUNDER_INT.load(Ordering::Relaxed) as f32 / 100.0;
                                 thunder_sink.set_volume(t_vol * t_int * m);
-                                let min_cd = 40u32 + ((100 - t_freq) as u32 * 8);
-                                thunder_cooldown = min_cd;
-                            },
-                            Err(e) => {
-                                eprintln!("ASMR Thunder: failed to decode audio asset: {}", e);
-                                ASMR_THUNDER_ON.store(0, std::sync::atomic::Ordering::Relaxed);
+                                let cd_secs = 3.0 + (100.0 - t_freq as f32) * 0.4;
+                                thunder_cooldown = (cd_secs / dt) as u32;
                             }
                         }
                     }
+                } else if !thunder_sink.empty() {
+                    thunder_sink.clear();
                 }
-                if !thunder_on {
-                    if !thunder_sink.empty() {
-                        thunder_sink.clear();
-                    }
-                }
+
+                // Sleep at end of iteration: ensures pause/stop executes with 0ms latency.
+                // 30ms when active for silky LFO; 250ms when idle to save CPU.
+                let sleep_ms = if any_active { 30 } else { 250 };
+                std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
             }
         });
 
@@ -1728,6 +1861,34 @@ mod tests {
                     break;
                 }
             }
+        }
+    }
+
+    #[test]
+    fn test_asmr_buffer_caching_and_zero_copy() {
+        let rain1 = get_rain_buffer().expect("rain buffer should load");
+        let rain2 = get_rain_buffer().expect("rain buffer should load");
+        assert!(std::sync::Arc::ptr_eq(&rain1.samples, &rain2.samples), "Rain buffer must be cached as a single Arc");
+
+        let wind1 = get_wind_buffer().expect("wind buffer should load");
+        let wind2 = get_wind_buffer().expect("wind buffer should load");
+        assert!(std::sync::Arc::ptr_eq(&wind1.samples, &wind2.samples), "Wind buffer must be cached as a single Arc");
+
+        let thunder1 = get_thunder_buffer().expect("thunder buffer should load");
+        let thunder2 = get_thunder_buffer().expect("thunder buffer should load");
+        assert!(std::sync::Arc::ptr_eq(&thunder1.samples, &thunder2.samples), "Thunder buffer must be cached as a single Arc");
+    }
+
+    #[test]
+    fn test_seamless_loop_source_bounded_and_smooth() {
+        let rain = get_rain_buffer().expect("rain buffer should load");
+        let mut loop_src = SeamlessLoopSource::new(rain.samples.clone(), rain.channels, rain.sample_rate, AsmrLoopKind::Rain);
+
+        // Process 10,000 frames through the filter and verify bounds
+        for _ in 0..10_000 {
+            let sample = loop_src.next().expect("infinite loop source should always yield");
+            assert!(!sample.is_nan(), "Sample must not be NaN");
+            assert!(sample >= -1.0 && sample <= 1.0, "Sample {} must be strictly bounded within [-1.0, 1.0]", sample);
         }
     }
 }

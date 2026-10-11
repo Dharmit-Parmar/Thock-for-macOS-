@@ -13,6 +13,13 @@ impl PRNG {
         self.seed ^= self.seed << 5;
         (self.seed as i32) as f32 / i32::MAX as f32
     }
+    #[inline(always)]
+    pub fn next_unit_f32(&mut self) -> f32 {
+        self.seed ^= self.seed << 13;
+        self.seed ^= self.seed >> 17;
+        self.seed ^= self.seed << 5;
+        (self.seed as f32) / (u32::MAX as f32)
+    }
 }
 
 // ─── TDF-II Biquad Filter ─────────────────────────────────────────────────────
@@ -53,6 +60,38 @@ impl Biquad {
                a1: -2.0 * cw * a0r, a2: (1.0 - alpha) * a0r, s1: 0.0, s2: 0.0 }
     }
 
+    pub fn peaking(sr: f32, fc: f32, q: f32, gain_db: f32) -> Self {
+        let a = 10.0f32.powf(gain_db / 40.0);
+        let w = 2.0 * std::f32::consts::PI * (fc / sr).clamp(0.001, 0.495);
+        let cw = w.cos();
+        let sw = w.sin();
+        let alpha = sw / (2.0 * q.max(0.1));
+        let a0r = 1.0 / (1.0 + alpha / a);
+        Self {
+            b0: (1.0 + alpha * a) * a0r,
+            b1: (-2.0 * cw) * a0r,
+            b2: (1.0 - alpha * a) * a0r,
+            a1: (-2.0 * cw) * a0r,
+            a2: (1.0 - alpha / a) * a0r,
+            s1: 0.0,
+            s2: 0.0,
+        }
+    }
+
+    #[inline(always)]
+    pub fn update_lowpass(&mut self, sr: f32, fc: f32, q: f32) {
+        let w = 2.0 * std::f32::consts::PI * (fc / sr).clamp(0.001, 0.495);
+        let cw = w.cos();
+        let alpha = w.sin() / (2.0 * q.max(0.1));
+        let a0r = 1.0 / (1.0 + alpha);
+        let b = (1.0 - cw) * 0.5;
+        self.b0 = b * a0r;
+        self.b1 = (1.0 - cw) * a0r;
+        self.b2 = b * a0r;
+        self.a1 = -2.0 * cw * a0r;
+        self.a2 = (1.0 - alpha) * a0r;
+    }
+
     #[inline(always)]
     pub fn process(&mut self, x: f32) -> f32 {
         let y = self.b0 * x + self.s1;
@@ -64,7 +103,7 @@ impl Biquad {
 
 // ─── Fast Algebraic Soft Limiter (Strictly bounded to [-1.0, 1.0]) ───────────
 #[inline(always)]
-fn soft_limit(x: f32) -> f32 {
+pub fn soft_limit(x: f32) -> f32 {
     x / (1.0 + x * x).sqrt()
 }
 
@@ -387,3 +426,4 @@ pub static ASMR_WIND_VOL: AtomicU32 = AtomicU32::new(40);
 pub static ASMR_THUNDER_FREQ: AtomicU32 = AtomicU32::new(50);
 pub static ASMR_THUNDER_INT: AtomicU32 = AtomicU32::new(70);
 pub static ASMR_THUNDER_VOL: AtomicU32 = AtomicU32::new(80);
+pub static ASMR_WIND_CUTOFF: AtomicU32 = AtomicU32::new(500);
