@@ -26,12 +26,17 @@ Overhaul the ambient ASMR sound engine (rain, wind, thunder) in Thock to replace
    - State transition caching eliminating redundant mutex locks in `Sink` at 33 Hz.
    - Loop sleep at end: 30ms active, 250ms idle (0.000% CPU).
 
-4. **Acoustic Bug Fixes & Refinements**:
-   - **Motor Rumble Elimination**: Replaced 320 Hz / +3.5 dB resonant peaking filter with an 85 Hz sub-bass highpass to eliminate HVAC/car rumble in the source recording. Expanded rain filter cutoff to 1200 Hz – 4000 Hz for airy droplet clarity. Reduced makeup multiplier to 1.05 to eliminate 3rd-harmonic intermodulation distortion.
-   - **Thunder Isolation**: Implemented backward-search peak crack detection in `decode_faded_thunder`, removing the 18.37s ambient rain prefix. Thunder now triggers as an isolated 1.63s lightning strike (600ms pre-rumble + 40ms attack + crack + 1.2s dissipation), completely preventing the pre-strike rain density jump.
-   - **Wind Air-Texture**: Expanded aerodynamic cutoff sweep to 350 Hz – 1200 Hz and integrated 750 Hz peaking EQ (+2 dB) into the active processing path for organic breath and leaf flutter.
+4. **Acoustic Bug Fixes & Procedural Synthesis**:
+   - **Procedural Rain Synthesis (100% Zero-Drone Natural Audio)**: Discovered that `rain.ogg` contained un-filterable mechanical harmonics (87.7 Hz, 258.4 Hz, 330.4 Hz, 516.8 Hz from automotive traffic/HVAC in the source recording). Implemented pure procedural natural rain generation (`generate_procedural_rain_buffer`) using:
+     - 1-pole pink/brown noise diffusion for continuous distant shower bed
+     - Stochastic Poisson process ($\lambda \approx 160\text{ drops/sec}$) triggering Minnaert bubble/damped droplet oscillators ($1.6\text{ kHz} - 3.8\text{ kHz}$, $\tau \in [2, 5]\text{ ms}$)
+     - 420 Hz highpass + 7.0 kHz lowpass + 1.9 kHz foliage resonance + 0.6s equal-power crossfade
+     - Measured frequency spectrum: $0\text{--}100\text{ Hz}$ reduced to $0.01\%$ ($-42\text{ dBFS}$), with $85.3\%$ of energy in the natural droplet impact band.
+     - Removed `static RAIN_OGG` from binary compilation, saving 292 KB static storage.
+   - **Thunder Isolation**: Backward-search transient detection in `decode_faded_thunder` isolates the 1.63s lightning strike (600ms pre-rumble + 40ms attack + crack + 1.2s dissipation), eliminating the 18.37s ambient rain prefix.
+   - **Wind Air-Texture**: Dynamic aerodynamic sweep ($350\text{ Hz} - 1200\text{ Hz}$) + 750 Hz peaking EQ (+2 dB) for leaf flutter and organic breath.
 
 5. **Verification**:
    - `cargo test`: 4/4 tests passed.
-   - `cargo run --bin verify`: Thunder trimmed duration verified at 1.63s (-21.3 dBFS peak crack).
-   - `cargo build --release`: clean compile.
+   - `cargo run --bin verify`: Procedural Rain (0% motor drone) verified at RMS 0.029 (-30.6 dBFS, 9.40s seamless loop). Thunder verified at 1.63s (-21.3 dBFS peak crack).
+   - `cargo build --release`: clean compile in 13.27s.

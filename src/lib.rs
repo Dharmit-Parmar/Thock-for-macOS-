@@ -71,7 +71,6 @@ pub struct AsmrBuffer {
     pub sample_rate: u32,
 }
 
-static RAIN_OGG: &[u8] = include_bytes!("../assets/asmr/rain.ogg");
 static WIND_OGG: &[u8] = include_bytes!("../assets/asmr/wind.ogg");
 static THUNDER_OGG: &[u8] = include_bytes!("../assets/asmr/thunder.ogg");
 
@@ -184,7 +183,7 @@ fn decode_faded_thunder(bytes: &'static [u8]) -> Option<AsmrBuffer> {
 
 pub fn get_rain_buffer() -> Option<&'static AsmrBuffer> {
     static CACHE: std::sync::OnceLock<Option<AsmrBuffer>> = std::sync::OnceLock::new();
-    CACHE.get_or_init(|| decode_crossfaded(RAIN_OGG)).as_ref()
+    CACHE.get_or_init(|| Some(crate::dsp::generate_procedural_rain_buffer(48000, 10.0))).as_ref()
 }
 
 pub fn get_wind_buffer() -> Option<&'static AsmrBuffer> {
@@ -214,15 +213,13 @@ impl SeamlessLoopSource {
         let (filter_left, filter_right, warmth_left, warmth_right) = match kind {
             AsmrLoopKind::Rain => {
                 let dens = crate::dsp::ASMR_RAIN_DENS.load(Ordering::Relaxed) as f32 / 100.0;
-                // Open up lowpass range: natural rain splash/droplets live at 1.2-4kHz
+                // Dynamic lowpass tracking density: 1.2kHz (soft drizzle) to 4.0kHz (lively shower)
                 let fc = 1200.0 + dens * 2800.0;
                 (
                     Some(crate::dsp::Biquad::lowpass(sample_rate as f32, fc * 0.97, 0.707)),
                     Some(crate::dsp::Biquad::lowpass(sample_rate as f32, fc * 1.03, 0.707)),
-                    // Sub-bass rumble cut at 85 Hz (removes HVAC/car rumble from rain recording)
-                    // + gentle body warmth at 180 Hz (real rain on glass/roof, not motor drone)
-                    Some(crate::dsp::Biquad::highpass(sample_rate as f32, 85.0, 0.707)),
-                    Some(crate::dsp::Biquad::highpass(sample_rate as f32, 85.0, 0.707)),
+                    None,
+                    None,
                 )
             }
             AsmrLoopKind::Wind => {
