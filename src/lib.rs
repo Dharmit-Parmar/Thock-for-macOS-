@@ -77,7 +77,7 @@ static RAIN_FIELD_OGG: &[u8] = include_bytes!("../assets/asmr/rain-field.ogg");
 
 #[inline]
 fn rain_density_drive(density: u32) -> f32 {
-    2.0 + density.min(100) as f32 / 100.0 * 2.0
+    1.2 + density.min(100) as f32 / 100.0 * 1.0
 }
 
 fn decode_audio(bytes: &'static [u8], crossfade_loop: bool, max_seconds: Option<u32>) -> Option<AsmrBuffer> {
@@ -225,10 +225,12 @@ impl SeamlessLoopSource {
         };
         let (filter_left, filter_right, warmth_left, warmth_right) = match kind {
             AsmrLoopKind::Rain => (
+                // 120 Hz high-pass: removes traffic & sub-rumble while preserving full droplet body
                 Some(crate::dsp::Biquad::highpass(sample_rate as f32, 120.0, 0.707)),
                 Some(crate::dsp::Biquad::highpass(sample_rate as f32, 120.0, 0.707)),
-                None,
-                None,
+                // 4.4 kHz smooth low-pass: gentle indoor air absorption eliminating harsh treble sizzle
+                Some(crate::dsp::Biquad::lowpass(sample_rate as f32, 4400.0, 0.65)),
+                Some(crate::dsp::Biquad::lowpass(sample_rate as f32, 4400.0, 0.65)),
             ),
             AsmrLoopKind::Wind => {
                 // Wider aerodynamic range (350-1400 Hz) restores air-texture and breath
@@ -290,8 +292,10 @@ impl Iterator for SeamlessLoopSource {
                 let density = crate::dsp::ASMR_RAIN_DENS.load(Ordering::Relaxed);
                 if ch_idx == 0 {
                     if let Some(filter) = &mut self.filter_left { sample = filter.process(sample); }
-                } else if let Some(filter) = &mut self.filter_right {
-                    sample = filter.process(sample);
+                    if let Some(warmth) = &mut self.warmth_left { sample = warmth.process(sample); }
+                } else {
+                    if let Some(filter) = &mut self.filter_right { sample = filter.process(sample); }
+                    if let Some(warmth) = &mut self.warmth_right { sample = warmth.process(sample); }
                 }
                 // Gentle compression raises the quiet field recording without allowing loop peaks to clip.
                 sample = crate::dsp::soft_limit(sample * rain_density_drive(density)) * fade;
@@ -494,7 +498,10 @@ impl Iterator for ZeroCopySource {
 }
 
 impl rodio::Source for ZeroCopySource {
-    fn current_frame_len(&self) -> Option<usize> { None }
+    #[inline]
+    fn current_frame_len(&self) -> Option<usize> {
+        Some(self.samples.len().saturating_sub(self.cursor))
+    }
     fn channels(&self) -> u16 { self.channels }
     fn sample_rate(&self) -> u32 { self.sample_rate }
     fn total_duration(&self) -> Option<std::time::Duration> {
@@ -765,6 +772,7 @@ pub fn run(is_cli: bool) {
             let mut rain_current_vol = 0.0f32;
             let mut prev_rain_vol = -1.0f32;
             let mut prev_wind_vol = -1.0f32;
+            let mut wind_current_vol = 0.0f32;
             let mut prev_thunder_vol = -1.0f32;
             let mut thunder_current_vol = 0.0f32;
 
@@ -775,12 +783,14 @@ pub fn run(is_cli: bool) {
                 let any_active = rain_on || wind_on || thunder_on;
 
                 let m = ASMR_MASTER_VOL.load(Ordering::Relaxed) as f32 / 100.0;
-                let dt = if any_active { 0.030f32 } else { 0.050f32 };
+                let dt = if any_active || rain_playing || wind_playing || thunder_current_vol > 0.0001 { 0.030f32 } else { 0.200f32 };
 
-                // Use the field recording from its first frame; synthetic resonant drops sounded tonal.
+                // Rain (field recording with click-free 250ms volume ramp)
                 let rain_target = if rain_on {
                     if !rain_playing {
-                        rain_field_sink.stop();
+                        if !rain_field_sink.empty() {
+                            rain_field_sink.clear();
+                        }
                         if let Some(buf) = get_rain_buffer() {
                             rain_field_sink.append(SeamlessLoopSource::new(
                                 buf.samples.clone(), buf.channels, buf.sample_rate, AsmrLoopKind::Rain,
@@ -795,7 +805,6 @@ pub fn run(is_cli: bool) {
                     0.0
                 };
                 if rain_playing {
-                    // A 250ms ramp prevents clicks when toggling rain or moving its slider.
                     let max_step = dt / 0.25;
                     rain_current_vol += (rain_target - rain_current_vol).clamp(-max_step, max_step);
                     if (rain_current_vol - prev_rain_vol).abs() > 0.002 {
@@ -803,15 +812,18 @@ pub fn run(is_cli: bool) {
                         prev_rain_vol = rain_current_vol;
                     }
                     if !rain_on && rain_current_vol <= 0.0001 {
-                        rain_field_sink.stop();
+                        rain_field_sink.pause();
+                        if !rain_field_sink.empty() {
+                            rain_field_sink.clear();
+                        }
                         rain_playing = false;
                         rain_current_vol = 0.0;
                         prev_rain_vol = -1.0;
                     }
                 }
 
-                // Wind (organic breathing gusts via dual-sine LFO + aerodynamic cutoff)
-                if wind_on {
+                // Wind (organic breathing gusts via dual-sine LFO + aerodynamic cutoff with 250ms volume ramp)
+                let wind_target = if wind_on {
                     if wind_sink.empty() {
                         if let Some(buf) = get_wind_buffer() {
                             wind_sink.append(SeamlessLoopSource::new(buf.samples.clone(), buf.channels, buf.sample_rate, AsmrLoopKind::Wind));
@@ -832,15 +844,26 @@ pub fn run(is_cli: bool) {
                     let wind_fc = 350.0 + 850.0 * ((gust_mult - 0.75).clamp(0.0, 1.0));
                     ASMR_WIND_CUTOFF.store(wind_fc as u32, Ordering::Relaxed);
 
-                    let target = wind_v * gust_mult * m * 0.75;
-                    if (target - prev_wind_vol).abs() > 0.002 {
-                        wind_sink.set_volume(target);
-                        prev_wind_vol = target;
+                    wind_v * gust_mult * m * 0.75
+                } else {
+                    0.0
+                };
+                if wind_playing {
+                    let wind_step = dt / 0.25;
+                    wind_current_vol += (wind_target - wind_current_vol).clamp(-wind_step, wind_step);
+                    if (wind_current_vol - prev_wind_vol).abs() > 0.002 {
+                        wind_sink.set_volume(wind_current_vol);
+                        prev_wind_vol = wind_current_vol;
                     }
-                } else if wind_playing {
-                    wind_sink.pause();
-                    wind_playing = false;
-                    prev_wind_vol = -1.0;
+                    if !wind_on && wind_current_vol <= 0.0001 {
+                        wind_sink.pause();
+                        if !wind_sink.empty() {
+                            wind_sink.clear();
+                        }
+                        wind_playing = false;
+                        wind_current_vol = 0.0;
+                        prev_wind_vol = -1.0;
+                    }
                 }
 
                 // Thunder (zero-allocation one-shot retrigger with instant first strike)
@@ -892,9 +915,8 @@ pub fn run(is_cli: bool) {
                     prev_thunder_vol = -1.0;
                 }
 
-                // Sleep at end of iteration: ensures pause/stop executes with 0ms latency.
-                // Keep toggles responsive while using a lower idle polling rate.
-                let sleep_ms = if any_active { 30 } else { 50 };
+                // Sleep at end of iteration: 30ms when audio is active, 200ms when idle to save CPU cycles.
+                let sleep_ms = if any_active || rain_playing || wind_playing || thunder_current_vol > 0.0001 { 30 } else { 200 };
                 std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
             }
         });
@@ -902,6 +924,7 @@ pub fn run(is_cli: bool) {
         // Cell<usize> provides interior mutability with zero overhead (no locks, no atomics).
         // CGEventTap requires Fn (not FnMut), so we can't mutate a plain usize directly.
         let default_idx = std::cell::Cell::new(0usize);
+        let strike_idx = std::cell::Cell::new(0u32);
 
         // Lock-free velocity tracking: store nanoseconds since UNIX epoch as AtomicU64.
         // Avoids a write-lock acquisition on every single KeyDown event.
@@ -967,7 +990,9 @@ pub fn run(is_cli: bool) {
 
                         if let Some(a) = audio {
                             // Micro-pitch humanization (+-1.5%) to eliminate machine-gun repetition
-                            let micro_jitter = 1.0 + ((((keycode as u32).wrapping_mul(1103515245) >> 16) as f32 / 32768.0) - 1.0) * 0.015;
+                            let strike = strike_idx.get();
+                            strike_idx.set(strike.wrapping_add(1));
+                            let micro_jitter = 1.0 + ((((keycode as u32).wrapping_add(strike).wrapping_mul(1103515245) >> 16) as f32 / 32768.0) - 1.0) * 0.015;
                             let effective_pitch = pack.pitch * micro_jitter;
                             if let Some(src) = a.play(playback_vol, effective_pitch) {
                                 let _ = handle.play_raw(src);
@@ -1917,7 +1942,7 @@ mod tests {
         assert!((fifth - (32767.0 / 32768.0)).abs() < 0.001);
 
         assert_eq!(src.next(), None);
-        assert_eq!(rodio::Source::current_frame_len(&src), None);
+        assert_eq!(rodio::Source::current_frame_len(&src), Some(0));
     }
 
     #[test]
@@ -1979,9 +2004,9 @@ mod tests {
 
     #[test]
     fn test_rain_density_has_audible_range_and_clamps() {
-        assert!((rain_density_drive(0) - 2.0).abs() < f32::EPSILON);
-        assert!((rain_density_drive(50) - 3.0).abs() < f32::EPSILON);
-        assert!((rain_density_drive(100) - 4.0).abs() < f32::EPSILON);
+        assert!((rain_density_drive(0) - 1.2).abs() < f32::EPSILON);
+        assert!((rain_density_drive(50) - 1.7).abs() < f32::EPSILON);
+        assert!((rain_density_drive(100) - 2.2).abs() < f32::EPSILON);
         assert_eq!(rain_density_drive(150), rain_density_drive(100));
     }
 

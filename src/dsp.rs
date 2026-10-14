@@ -11,14 +11,16 @@ impl PRNG {
         self.seed ^= self.seed << 13;
         self.seed ^= self.seed >> 17;
         self.seed ^= self.seed << 5;
-        (self.seed as i32) as f32 / i32::MAX as f32
+        let bits = 0x4000_0000 | (self.seed >> 9);
+        f32::from_bits(bits) - 3.0
     }
     #[inline(always)]
     pub fn next_unit_f32(&mut self) -> f32 {
         self.seed ^= self.seed << 13;
         self.seed ^= self.seed >> 17;
         self.seed ^= self.seed << 5;
-        (self.seed as f32) / (u32::MAX as f32)
+        let bits = 0x3f80_0000 | (self.seed >> 9);
+        f32::from_bits(bits) - 1.0
     }
 }
 
@@ -97,6 +99,8 @@ impl Biquad {
         let y = self.b0 * x + self.s1;
         self.s1 = self.b1 * x - self.a1 * y + self.s2;
         self.s2 = self.b2 * x - self.a2 * y;
+        if self.s1.abs() < 1e-15 { self.s1 = 0.0; }
+        if self.s2.abs() < 1e-15 { self.s2 = 0.0; }
         y
     }
 }
@@ -169,8 +173,8 @@ impl ModalMode {
     fn step(&mut self) -> f32 {
         let next_u = (self.u * self.cos_w - self.v * self.sin_w) * self.decay;
         let next_v = (self.u * self.sin_w + self.v * self.cos_w) * self.decay;
-        self.u = next_u;
-        self.v = next_v;
+        self.u = if next_u.abs() < 1e-15 { 0.0 } else { next_u };
+        self.v = if next_v.abs() < 1e-15 { 0.0 } else { next_v };
         self.v
     }
 }
@@ -404,7 +408,10 @@ impl Iterator for ProceduralSwitch {
 }
 
 impl Source for ProceduralSwitch {
-    fn current_frame_len(&self) -> Option<usize> { None }
+    #[inline]
+    fn current_frame_len(&self) -> Option<usize> {
+        Some((self.total.saturating_sub(self.cursor)) as usize)
+    }
     fn channels(&self) -> u16 { 1 }
     fn sample_rate(&self) -> u32 { self.sr }
     fn total_duration(&self) -> Option<Duration> {
