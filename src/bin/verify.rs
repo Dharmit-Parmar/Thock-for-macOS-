@@ -85,7 +85,7 @@ fn main() {
             (f * f) as f64
         }).sum();
         let rms = (sum_sq / rain_buf.samples.len() as f64).sqrt() as f32;
-        println!("\nProcedural Rain Buffer (in-memory, 0% motor drone):");
+        println!("\nRain Field Recording (cached loop):");
         println!("  channels={}, sample_rate={}, frames={}, duration={:.2}s", rain_buf.channels, rain_buf.sample_rate, frames, dur);
         println!("  peak={:.3}, rms={:.3} ({:.1} dBFS)", max_val as f32 / 32768.0, rms, 20.0 * rms.log10());
     }
@@ -99,7 +99,7 @@ fn main() {
             (f * f) as f64
         }).sum();
         let rms = (sum_sq / thunder_buf.samples.len() as f64).sqrt() as f32;
-        println!("\nTrimmed Thunder Buffer (in-memory, isolated strike):");
+        println!("\nThunder Field Recording (cached lightning-to-rumble event):");
         println!("  channels={}, sample_rate={}, frames={}, duration={:.2}s", thunder_buf.channels, thunder_buf.sample_rate, frames, dur);
         println!("  peak={:.3}, rms={:.3} ({:.1} dBFS)", max_val as f32 / 32768.0, rms, 20.0 * rms.log10());
     }

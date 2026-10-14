@@ -163,16 +163,16 @@ Thock includes 16 curated acoustic profiles covering linear, tactile, clicky, mo
 
 Thock features an integrated ambient sound engine designed to blend focus-enhancing environmental acoustics beneath your typing cadence:
 
-- **Rain Layer**: Multi-pole Biquad warmth filter modeling gentle precipitation without high-frequency harshness.
+- **Rain Layer**: A natural stereo field recording starts immediately with a short volume ramp. A 120 Hz high-pass filter reduces recording rumble, and bounded soft compression makes the intensity control audible without clipping. The first 90 seconds are cached and crossfaded for looping to keep decoded audio memory below 8 MB. Source credit and processing details are in `assets/asmr/SOURCES.md`.
 - **Wind Layer**: Low-frequency resonant noise generator with dynamic gust oscillation.
-- **Thunder Layer**: Sub-bass physical rumble generator triggered with organic timing variance.
+- **Thunder Layer**: A 43.5-second field recording containing the lightning cue, two thunderclaps, and the full rumble decay. It is cached on first use, separate from rain, and credited in `assets/asmr/SOURCES.md`.
 
 ### Ambient Configuration Parameters
 
 ```bash
 asmr rain on            # Activate rain layer
 asmr rain_vol 70        # Set rain volume to 70%
-asmr rain_dens 80       # Adjust rain droplet density
+asmr rain_dens 80       # Adjust perceived rain intensity
 asmr wind on            # Activate wind layer
 asmr wind_gust 60       # Adjust wind gust dynamics
 asmr thunder on         # Activate distant thunder
