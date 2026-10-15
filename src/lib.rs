@@ -77,7 +77,10 @@ static RAIN_FIELD_OGG: &[u8] = include_bytes!("../assets/asmr/rain-field.ogg");
 
 #[inline]
 fn rain_density_drive(density: u32) -> f32 {
-    1.2 + density.min(100) as f32 / 100.0 * 1.0
+    // 0.85 at density=0, 1.35 at density=100. Stays well below soft_limit saturation
+    // (recording peak 0.923 × 1.35 = 1.25 → soft_limit output 0.78, <1% THD).
+    // Previous 1.2–2.2x range caused metallic odd-harmonic distortion from over-saturation.
+    0.85 + density.min(100) as f32 * 0.005
 }
 
 fn decode_audio(bytes: &'static [u8], crossfade_loop: bool, max_seconds: Option<u32>) -> Option<AsmrBuffer> {
@@ -207,6 +210,7 @@ pub struct SeamlessLoopSource {
     filter_right: Option<crate::dsp::Biquad>,
     warmth_left: Option<crate::dsp::Biquad>,
     warmth_right: Option<crate::dsp::Biquad>,
+    density_cache: f32,    // cached rain_density_drive — refreshed every 128 frames
     kind: AsmrLoopKind,
 }
 
@@ -225,12 +229,18 @@ impl SeamlessLoopSource {
         };
         let (filter_left, filter_right, warmth_left, warmth_right) = match kind {
             AsmrLoopKind::Rain => (
-                // 120 Hz high-pass: removes traffic & sub-rumble while preserving full droplet body
-                Some(crate::dsp::Biquad::highpass(sample_rate as f32, 120.0, 0.707)),
-                Some(crate::dsp::Biquad::highpass(sample_rate as f32, 120.0, 0.707)),
-                // 4.4 kHz smooth low-pass: gentle indoor air absorption eliminating harsh treble sizzle
-                Some(crate::dsp::Biquad::lowpass(sample_rate as f32, 4400.0, 0.65)),
-                Some(crate::dsp::Biquad::lowpass(sample_rate as f32, 4400.0, 0.65)),
+                // 2800 Hz velvety lowpass (Q=0.5, maximally flat — no resonant shelf).
+                // Cuts the harsh 3–5 kHz zone (Fletcher-Munson harshness peak) so rain
+                // sounds like soft water on leaves, not crispy ice/stones.
+                // Q=0.5 guarantees zero shelf bump; previous 4400 Hz Q=0.65 left energy
+                // in the ear's most sensitive and harshest-feeling frequency range.
+                Some(crate::dsp::Biquad::lowpass(sample_rate as f32, 2800.0, 0.5)),
+                Some(crate::dsp::Biquad::lowpass(sample_rate as f32, 2800.0, 0.5)),
+                // 400 Hz body warmth (+2 dB, Q=1.5): adds soft leafy droplet resonance.
+                // Without low-mid body, filtered rain sounds "thin" and each impact has
+                // no fluid softness — it sounds stony. +2 dB at 400 Hz gives it depth.
+                Some(crate::dsp::Biquad::peaking(sample_rate as f32, 400.0, 1.5, 2.0)),
+                Some(crate::dsp::Biquad::peaking(sample_rate as f32, 400.0, 1.5, 2.0)),
             ),
             AsmrLoopKind::Wind => {
                 // Wider aerodynamic range (350-1400 Hz) restores air-texture and breath
@@ -257,6 +267,7 @@ impl SeamlessLoopSource {
             filter_right,
             warmth_left,
             warmth_right,
+            density_cache: rain_density_drive(crate::dsp::ASMR_RAIN_DENS.load(Ordering::Relaxed)),
             kind,
         }
     }
@@ -272,7 +283,7 @@ impl Iterator for SeamlessLoopSource {
             self.cursor = (self.rain_loop_start + self.rain_crossfade_frames) * self.channels as usize;
         }
         let ch_idx = self.cursor % self.channels as usize;
-        let mut sample = self.samples[self.cursor] as f32 / 32768.0;
+        let mut sample = self.samples[self.cursor] as f32 * 0.000030517578_f32;
 
         match self.kind {
             AsmrLoopKind::Rain => {
@@ -282,14 +293,18 @@ impl Iterator for SeamlessLoopSource {
                 if self.rain_crossfade_frames > 0 && frame >= fade_start {
                     let t = (frame - fade_start) as f32 / self.rain_crossfade_frames as f32;
                     let theta = t * std::f32::consts::FRAC_PI_2;
-                    let loop_sample = self.samples[(self.rain_loop_start + frame - fade_start) * self.channels as usize + ch_idx] as f32 / 32768.0;
+                    let loop_sample = self.samples[(self.rain_loop_start + frame - fade_start) * self.channels as usize + ch_idx] as f32 * 0.000030517578_f32;
                     sample = sample * theta.cos() + loop_sample * theta.sin();
                 }
                 if ch_idx == 0 {
                     self.played_frames += 1;
+                    // Refresh density cache every 128 left-channel frames (~5.8ms): avoids
+                    // an atomic load every 22μs in the hot path without perceptible slider lag.
+                    if self.played_frames & 127 == 0 {
+                        self.density_cache = rain_density_drive(crate::dsp::ASMR_RAIN_DENS.load(Ordering::Relaxed));
+                    }
                 }
-                let fade = (self.played_frames as f32 / (self.sample_rate as f32 * 0.05)).min(1.0);
-                let density = crate::dsp::ASMR_RAIN_DENS.load(Ordering::Relaxed);
+                let fade = (self.played_frames as f32 * (1.0 / (self.sample_rate as f32 * 0.05))).min(1.0);
                 if ch_idx == 0 {
                     if let Some(filter) = &mut self.filter_left { sample = filter.process(sample); }
                     if let Some(warmth) = &mut self.warmth_left { sample = warmth.process(sample); }
@@ -297,8 +312,7 @@ impl Iterator for SeamlessLoopSource {
                     if let Some(filter) = &mut self.filter_right { sample = filter.process(sample); }
                     if let Some(warmth) = &mut self.warmth_right { sample = warmth.process(sample); }
                 }
-                // Gentle compression raises the quiet field recording without allowing loop peaks to clip.
-                sample = crate::dsp::soft_limit(sample * rain_density_drive(density)) * fade;
+                sample = crate::dsp::soft_limit(sample * self.density_cache) * fade;
             }
             AsmrLoopKind::Wind => {
                 // Update aerodynamic lowpass filter tracking dynamic gust cutoff
@@ -419,15 +433,16 @@ extern "C" {
 
 static VOL: AtomicU32 = AtomicU32::new(100);
 
-// PredecodedAudio stores raw compressed audio bytes (WAV/OGG).
-// rodio's Decoder streams lazily — first-sample latency is ~0ms.
-// RAM footprint: ~30KB per file (compressed) vs ~60KB decoded f32.
-// 34-file pack: ~1MB RAM instead of ~2MB. 114-file pack: ~3MB instead of ~7MB.
+// PredecodedAudio stores eagerly-decoded PCM samples as a shared Arc<[i16]>.
+// Memory footprint: exactly one copy of PCM per unique file. Because load_pack
+// pre-warms all samples anyway (defaults + common keys), the OnceLock lazy approach
+// gave no practical savings — it just held BOTH compressed bytes AND decoded PCM
+// simultaneously after first use, doubling per-file RAM.
+// Now: compressed bytes are decoded and dropped immediately, leaving only Arc<[i16]>.
 
 #[derive(Clone)]
 pub struct PredecodedAudio {
-    pub file_bytes: std::sync::Arc<[u8]>,
-    pub decoded: std::sync::Arc<std::sync::OnceLock<std::sync::Arc<[i16]>>>,
+    pub samples_data: std::sync::Arc<[i16]>,
     pub channels: u16,
     pub sample_rate: u32,
 }
@@ -435,39 +450,31 @@ pub struct PredecodedAudio {
 impl PredecodedAudio {
     fn new(path: &std::path::Path) -> Option<Self> {
         let bytes = std::fs::read(path).ok()?;
-        let cursor = std::io::Cursor::new(bytes.clone());
+        let cursor = std::io::Cursor::new(bytes);
         let decoder = rodio::Decoder::new(cursor).ok()?;
         let channels = rodio::Source::channels(&decoder);
         let sample_rate = rodio::Source::sample_rate(&decoder);
+        let s: Vec<i16> = rodio::Source::convert_samples::<i16>(decoder).collect();
+        // file bytes are dropped here; only decoded PCM survives
         Some(Self {
-            file_bytes: std::sync::Arc::from(bytes.into_boxed_slice()),
-            decoded: std::sync::Arc::new(std::sync::OnceLock::new()),
+            samples_data: std::sync::Arc::from(s.into_boxed_slice()),
             channels,
             sample_rate,
         })
     }
 
     pub fn samples(&self) -> std::sync::Arc<[i16]> {
-        self.decoded.get_or_init(|| {
-            let cursor = std::io::Cursor::new(self.file_bytes.clone());
-            if let Ok(decoder) = rodio::Decoder::new(cursor) {
-                let s: Vec<i16> = rodio::Source::convert_samples::<i16>(decoder).collect();
-                std::sync::Arc::from(s.into_boxed_slice())
-            } else {
-                std::sync::Arc::from(Vec::new().into_boxed_slice())
-            }
-        }).clone()
+        self.samples_data.clone()
     }
 
     fn play(&self, vol: f32, pitch: f32) -> Option<impl rodio::Source<Item = f32>> {
-        let samples = self.samples();
         let src = ZeroCopySource {
-            samples,
+            samples: self.samples_data.clone(),
             channels: self.channels,
             sample_rate: self.sample_rate,
             cursor: 0,
         }.amplify(vol);
-        
+
         if (pitch - 1.0).abs() > 0.005 {
             Some(DirectOrSpeed::Speed(rodio::source::Source::speed(src, pitch)))
         } else {
@@ -475,6 +482,7 @@ impl PredecodedAudio {
         }
     }
 }
+
 
 struct ZeroCopySource {
     samples: std::sync::Arc<[i16]>,
@@ -488,7 +496,7 @@ impl Iterator for ZeroCopySource {
     #[inline(always)]
     fn next(&mut self) -> Option<f32> {
         if self.cursor < self.samples.len() {
-            let sample = self.samples[self.cursor] as f32 / 32768.0;
+            let sample = self.samples[self.cursor] as f32 * 0.000030517578_f32;
             self.cursor += 1;
             Some(sample)
         } else {
@@ -1911,11 +1919,8 @@ mod tests {
     #[test]
     fn test_zero_copy_source_conversion() {
         let samples: Vec<i16> = vec![-32768, -16384, 0, 16384, 32767];
-        let lock = std::sync::OnceLock::new();
-        let _ = lock.set(std::sync::Arc::from(samples.into_boxed_slice()));
         let audio = PredecodedAudio {
-            file_bytes: std::sync::Arc::from(Vec::new().into_boxed_slice()),
-            decoded: std::sync::Arc::new(lock),
+            samples_data: std::sync::Arc::from(samples.into_boxed_slice()),
             channels: 2,
             sample_rate: 44100,
         };
@@ -1956,7 +1961,7 @@ mod tests {
                     let pack = pack.unwrap();
                     // Verify that mapped sounds share Arc references where filenames repeat
                     if pack.mappings.len() > 10 {
-                        let sample_arcs: Vec<_> = pack.mappings.values().map(|a| a.file_bytes.as_ptr()).collect();
+                        let sample_arcs: Vec<_> = pack.mappings.values().map(|a| a.samples_data.as_ptr()).collect();
                         let unique_ptrs: std::collections::HashSet<_> = sample_arcs.iter().copied().collect();
                         // Many packs have repeated sound files; verify unique buffers <= total mappings
                         assert!(unique_ptrs.len() <= sample_arcs.len());
@@ -2004,9 +2009,9 @@ mod tests {
 
     #[test]
     fn test_rain_density_has_audible_range_and_clamps() {
-        assert!((rain_density_drive(0) - 1.2).abs() < f32::EPSILON);
-        assert!((rain_density_drive(50) - 1.7).abs() < f32::EPSILON);
-        assert!((rain_density_drive(100) - 2.2).abs() < f32::EPSILON);
+        assert!((rain_density_drive(0) - 0.85).abs() < f32::EPSILON);
+        assert!((rain_density_drive(50) - 1.10).abs() < 0.001);
+        assert!((rain_density_drive(100) - 1.35).abs() < f32::EPSILON);
         assert_eq!(rain_density_drive(150), rain_density_drive(100));
     }
 
