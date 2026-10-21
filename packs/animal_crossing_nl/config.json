@@ -59,6 +59,8 @@
     "54": "shift.wav",
     "56": "option.wav",
     "57": "space.wav",
+    "58": "capslock (unused).wav",
+    "61005": "function (unused).wav",
     "3613": "control.wav",
     "3640": "command.wav",
     "3676": "option.wav",
