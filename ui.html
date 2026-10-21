@@ -313,9 +313,14 @@
         else if (window.ipc) { window.ipc.postMessage(JSON.stringify(msg)); }
     };
 
+    let volSaveTimer = null;
     function setVolume(val) {
         document.getElementById('vol-display').innerText = val + '%';
         safeIpc({ type: "set_volume", value: parseInt(val) });
+        clearTimeout(volSaveTimer);
+        volSaveTimer = setTimeout(() => {
+            safeIpc({ type: "save_volume", value: parseInt(val) });
+        }, 300);
     }
 
     function selectPack(packId) {
@@ -333,9 +338,13 @@
 
     function deletePack(e, packId) {
         e.stopPropagation();
+        const card = document.getElementById('pack-' + packId);
+        if (card && card.dataset.fav === "true") {
+            alert("🔒 Cannot delete favorite pack '" + packId + "'. Remove it from favorites first!");
+            return;
+        }
         if (confirm("Are you sure you want to delete pack '" + packId + "'?")) {
             safeIpc({ type: "delete_pack", value: packId });
-            const card = document.getElementById('pack-' + packId);
             if(card) {
                 card.style.opacity = '0';
                 card.style.transform = 'scale(0.9)';
@@ -486,14 +495,14 @@
             const procedural = {
                 switch_type: document.getElementById('proc-type').value,
                 spring_weight: parseFloat(document.getElementById('proc-weight').value),
-                lube_amount: parseFloat(document.getElementById('proc-lube').value),
+                lube_amount: parseFloat(document.getElementById('proc-lube').value) / 100.0,
                 pitch: 1.0,
                 keycap_material: 'pbt',
                 plate_material: 'brass',
                 mounting_style: 'tray',
-                foam_mod: 50,
+                foam_mod: 0.50,
                 case_material: 'aluminum',
-                o_rings: parseFloat(document.getElementById('proc-orings').value)
+                o_rings: parseFloat(document.getElementById('proc-orings').value) / 100.0
             };
             safeIpc({ type: "preview_maker", value: { base: '__procedural__', pitch: 1.0, volume: 1.0, procedural: procedural }});
         }, 30);
@@ -505,14 +514,14 @@
         const procedural = {
             switch_type: document.getElementById('proc-type').value,
             spring_weight: parseFloat(document.getElementById('proc-weight').value),
-            lube_amount: parseFloat(document.getElementById('proc-lube').value),
+            lube_amount: parseFloat(document.getElementById('proc-lube').value) / 100.0,
             pitch: 1.0,
             keycap_material: 'pbt',
             plate_material: 'brass',
             mounting_style: 'tray',
-            foam_mod: 50,
+            foam_mod: 0.50,
             case_material: 'aluminum',
-            o_rings: parseFloat(document.getElementById('proc-orings').value)
+            o_rings: parseFloat(document.getElementById('proc-orings').value) / 100.0
         };
         safeIpc({ type: "save_maker", value: { name: name, base: '__procedural__', pitch: 1.0, volume: 1.0, procedural: procedural }});
         switchTab('packs');

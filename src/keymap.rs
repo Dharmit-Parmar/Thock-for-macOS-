@@ -108,6 +108,17 @@ pub fn get_key_map() -> &'static [Option<u64>; 128] {
             (91, 72),  // Kp8
             (92, 73),  // Kp9
             (65, 52),  // KpDecimal
+            (63, 61005), // Fn / Globe
+            (81, 61011), // KpEquals
+            (10, 41),    // ISO Section (§ / ±)
+            (105, 89),   // F13
+            (107, 90),   // F14
+            (113, 91),   // F15
+            (106, 92),   // F16
+            (64, 93),    // F17
+            (79, 94),    // F18
+            (80, 95),    // F19
+            (90, 96),    // F20
         ];
                 let mut map = [None; 128];
         for &(cg_code, mech_code) in standard {

@@ -221,6 +221,9 @@ impl ProceduralSwitch {
         let srf = sr as f32;
         let vel = velocity.clamp(0.85, 1.20);
         let spring_scale = (config.spring_weight / 55.0).clamp(0.7, 1.3);
+        let lube = if config.lube_amount > 1.0 { config.lube_amount / 100.0 } else { config.lube_amount }.clamp(0.0, 1.0);
+        let foam = if config.foam_mod > 1.0 { config.foam_mod / 100.0 } else { config.foam_mod }.clamp(0.0, 1.0);
+        let _orings = if config.o_rings > 1.0 { config.o_rings / 100.0 } else { config.o_rings }.clamp(0.0, 1.0);
 
         // ── 1. Top-out (Keyup) vs. Bottom-out (Keydown) ────────────────────────
         let (impact_vol, keyup_pitch_mult, topout_hpf) = if is_keyup {
@@ -236,7 +239,7 @@ impl ProceduralSwitch {
 
         // ── 2. Contact Mechanics (Smooth Rise + Exponential Fall) ─────────────
         // Lubing softens the impact edge (longer rise, smoother impact)
-        let t_rise = (0.0003 + config.lube_amount * 0.0004) * (if is_keyup { 0.6 } else { 1.0 });
+        let t_rise = (0.0003 + lube * 0.0004) * (if is_keyup { 0.6 } else { 1.0 });
         let base_decay_ms: f32 = match config.switch_type.as_str() {
             "cream"                             => 3.5,
             "linear" | "red" | "black"         => 3.0,
@@ -244,11 +247,11 @@ impl ProceduralSwitch {
             "clicky" | "blue" | "box_jade"     => 2.5,
             _                                  => 3.2,
         };
-        let tau_decay = (base_decay_ms / 1000.0) * (1.0 + config.foam_mod * 0.35);
+        let tau_decay = (base_decay_ms / 1000.0) * (1.0 + foam * 0.35);
 
         // ── 3. Dual Formant Cavity Tuning (The Physical "Thock" & "Clack") ────
         // Formant 1: Deep cavity resonance (Keycap + Case air volume)
-        let f_cavity: f32 = match config.plate_material.as_str() {
+        let f_cavity: f32 = (match config.plate_material.as_str() {
             "polycarbonate" | "pc" => 360.0,
             "pom"                  => 420.0,
             "nylon"                => 460.0,
@@ -257,10 +260,10 @@ impl ProceduralSwitch {
             "aluminum"             => 620.0,
             "brass"                => 680.0,
             _                      => 450.0,
-        } * config.pitch * keyup_pitch_mult * (1.0 - config.foam_mod * 0.20);
+        } * config.pitch * keyup_pitch_mult * (1.0 - foam * 0.20)).clamp(60.0, 8000.0);
 
         // Formant 2: Switch housing impact clack (stiff plastic contact)
-        let f_clack: f32 = match config.plate_material.as_str() {
+        let f_clack: f32 = (match config.plate_material.as_str() {
             "polycarbonate" | "pc" => 1100.0,
             "pom"                  => 1350.0,
             "nylon"                => 1500.0,
@@ -269,10 +272,10 @@ impl ProceduralSwitch {
             "aluminum"             => 2600.0,
             "brass"                => 3000.0,
             _                      => 1500.0,
-        } * config.pitch * keyup_pitch_mult * (1.0 - config.lube_amount * 0.25);
+        } * config.pitch * keyup_pitch_mult * (1.0 - lube * 0.25)).clamp(120.0, 12000.0);
 
-        let q_cavity = 2.2 + config.foam_mod * 1.5;
-        let q_clack = 3.0 + config.lube_amount * 1.0;
+        let q_cavity = 2.2 + foam * 1.5;
+        let q_clack = 3.0 + lube * 1.0;
 
         let thock_cavity = Biquad::bandpass(srf, f_cavity, q_cavity);
         let clack_housing = Biquad::bandpass(srf, f_clack, q_clack);
@@ -281,20 +284,20 @@ impl ProceduralSwitch {
         let (thock_vol, clack_vol) = if is_keyup {
             (0.15, 0.85) // keyup is mostly high-frequency clack
         } else {
-            let tv = 0.70 + config.foam_mod * 0.25;
-            let cv = (0.35 - config.foam_mod * 0.15).max(0.10);
+            let tv = 0.70 + foam * 0.25;
+            let cv = (0.35 - foam * 0.15).max(0.10);
             (tv, cv)
         };
 
         // Output presence filter (removes unnatural hiss above 5.5 kHz)
-        let lp_fc = (5800.0 - config.lube_amount * 1500.0 - config.foam_mod * 1200.0).max(2200.0);
+        let lp_fc = (5800.0 - lube * 1500.0 - foam * 1200.0).max(2200.0);
         let presence_lpf = Biquad::lowpass(srf, lp_fc, 0.707);
 
         // ── 4. Inharmonic Plate Modes (Continuous, Impulse-Excited) ───────────
         // Chladni plate mode ratios (1.0 : 1.48 : 2.14)
         let plate_f0 = f_cavity * 1.5;
-        let plate_decay = if is_keyup { 0.003 } else { 0.008 * (1.0 - config.foam_mod * 0.6) };
-        let mode_vol = if is_keyup { 0.015 } else { 0.045 * (1.0 - config.lube_amount * 0.4) };
+        let plate_decay = if is_keyup { 0.003 } else { 0.008 * (1.0 - foam * 0.6) };
+        let mode_vol = if is_keyup { 0.015 } else { 0.045 * (1.0 - lube * 0.4) };
 
         let modes = [
             ModalMode::new(plate_f0,        plate_decay,        mode_vol,        srf),
@@ -357,7 +360,8 @@ impl Iterator for ProceduralSwitch {
         let pulse = if t < self.t_rise {
             (std::f32::consts::PI * 0.5 * (t / self.t_rise)).sin()
         } else {
-            (-(t - self.t_rise) / self.tau_decay).exp()
+            let decay_arg = -(t - self.t_rise) / self.tau_decay;
+            if decay_arg < -20.0 { 0.0 } else { decay_arg.exp() }
         };
 
         // 2. High-frequency micro-roughness noise (attenuated with pulse)

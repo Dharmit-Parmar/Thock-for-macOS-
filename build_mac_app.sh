@@ -22,6 +22,7 @@ mkdir -p "${RESOURCES_DIR}"
 
 echo "Copying binary and sound packs..."
 cp target/release/thock-app "${MACOS_DIR}/Thock"
+cp target/release/thock-cli "${MACOS_DIR}/thock-cli"
 cp -r packs "${RESOURCES_DIR}/packs"
 cp AppIcon.icns "${RESOURCES_DIR}/AppIcon.icns"
 
@@ -49,4 +50,8 @@ cat <<PLIST > "${CONTENTS_DIR}/Info.plist"
 </plist>
 PLIST
 
-echo "Done! The macOS app bundle is ready."
+echo "Creating distribution zip archive..."
+rm -f Thock-macOS.zip
+zip -r -y -q Thock-macOS.zip "${APP_DIR}"
+
+echo "Done! The macOS app bundle and Thock-macOS.zip are ready."

@@ -11,12 +11,11 @@
 
 ## Phase 3: Natural ASMR Acoustic Engine & Zero-Allocation DSP (In Progress)
 **Goal:** Natural rain, wind, and thunder with low-allocation streaming playback.
-- Rain starts from the licensed field recording with a short volume ramp. A 120 Hz high-pass reduces recording rumble; playback caches 90 seconds and loops through the later half with an equal-power crossfade.
+- Rain uses one natural field recording that grows from sparse drops into steady rain, eliminating the cross-recording splice. A 120 Hz high-pass reduces low rumble; linear density gain stays within measured peak headroom to preserve transients. Playback caches 60 seconds (about 5 MiB PCM) and loops the steadier final 30 seconds with an equal-power crossfade.
 - Wind uses block-rate filter updates and a continuous gust LFO.
-- Rain, wind, and thunder buffers are decoded once and cached; rain uses about 7.6 MiB of decoded PCM.
-- **Recorded Rain Texture**: The four-minute source recording has 18.4 dB less sub-80Hz RMS and 7.5 dB less energy above 4kHz than the old rain asset; 300Hz–4kHz rain energy is 2.2 dB higher.
-- **Rain Onset**: Sparse drops fade out as the real recording fades in over four seconds. The recording begins at its natural opening and uses a short click-prevention fade.
-- **Rolling Thunderclap**: Plays a 41.2s lightning-to-rumble event independently of rain, with a 40ms attack and 300ms tail fade. Re-enabling resumes the sink; event timing varies with the frequency control.
-- Release build and asset verifier pass. Listening validation of the refreshed app remains pending; unit tests have not been rerun after the latest changes.
+- Rain, wind, and thunder buffers are decoded once and cached; rain uses about 5 MiB of decoded PCM.
+- **Rain Onset**: The sparse-drop intro plays once before the steady recording loops.
+- **Rolling Thunderclap**: A separate recording starts 150ms before the first strike and retains both claps and the full rumble tail, with a 20ms attack and 300ms release.
+- Listening validation of the refreshed app remains pending.
 
 
