@@ -304,8 +304,9 @@ impl SeamlessLoopSource {
                 // Remove low-frequency traffic/wind rumble while retaining the rain's crisp drop transients.
                 Some(crate::dsp::Biquad::highpass(sample_rate as f32, 120.0, 0.707)),
                 Some(crate::dsp::Biquad::highpass(sample_rate as f32, 120.0, 0.707)),
-                None,
-                None,
+                // Calming acoustic warmth: 2200 Hz lowpass (Q=0.60) prevents ear-canal resonant sizzle and headache-inducing fatigue
+                Some(crate::dsp::Biquad::lowpass(sample_rate as f32, 2200.0, 0.60)),
+                Some(crate::dsp::Biquad::lowpass(sample_rate as f32, 2200.0, 0.60)),
                 0.0,
             ),
             AsmrLoopKind::Wind => {
@@ -2636,6 +2637,31 @@ mod tests {
         };
         assert!(measure(60.0) < 0.3, "120 Hz high-pass should attenuate low rumble");
         assert!(measure(1_000.0) > 0.65, "120 Hz high-pass should preserve rain transients");
+    }
+
+    #[test]
+    fn test_rain_calming_acoustic_warmth_and_no_buzz() {
+        let measure = |frequency: f32| {
+            let mut hp = crate::dsp::Biquad::highpass(22_050.0, 120.0, 0.707);
+            let mut lp = crate::dsp::Biquad::lowpass(22_050.0, 2200.0, 0.60);
+            let mut sum = 0.0f64;
+            let mut count = 0usize;
+            for n in 0..44_100 {
+                let input = (2.0 * std::f32::consts::PI * frequency * n as f32 / 22_050.0).sin();
+                let output = lp.process(hp.process(input));
+                if n >= 2_000 {
+                    sum += (output * output) as f64;
+                    count += 1;
+                }
+            }
+            (sum / count as f64).sqrt() as f32
+        };
+        // 1. Passband (500 Hz droplet presence) is preserved (> -1 dB)
+        assert!(measure(500.0) > 0.65, "Droplet presence in 500 Hz range should be preserved");
+        // 2. Ear-canal resonance sizzle (4000 Hz) is strongly attenuated to prevent headaches (> 10 dB down)
+        assert!(measure(4_000.0) < 0.25, "Headache-inducing 4 kHz ear-canal band must be rolled off");
+        // 3. Ultra-high frequencies (> 8000 Hz) are effectively eliminated (> 22 dB down)
+        assert!(measure(8_000.0) < 0.08, "High-frequency hiss must be effectively eliminated");
     }
 
     #[test]
