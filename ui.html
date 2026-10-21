@@ -142,61 +142,120 @@
         <div id="view-generator" class="h-full flex flex-col p-6 overflow-hidden hidden">
             <div class="max-w-3xl mx-auto w-full h-full flex flex-col">
                 <div class="bg-white/60 p-8 rounded-xl flex-grow overflow-y-auto pb-10 border border-white/60 shadow-sm backdrop-blur-md">
-                    <div class="flex justify-between items-end mb-8">
+                    <div class="flex justify-between items-end mb-6">
                         <div>
-                            <h2 class="text-2xl font-bold text-gray-800">Procedural Generator</h2>
-                            <p class="text-gray-500 mt-1 font-medium">Design your perfect switch mathematically.</p>
+                            <h2 class="text-2xl font-bold text-gray-800">Switch Studio</h2>
+                            <p class="text-gray-500 mt-1 font-medium">Craft, tune, and customize your signature mechanical switch.</p>
                         </div>
                     </div>
 
-                    <!-- Generator forms remain largely similar but adapted to the new theme slightly -->
-                    <div class="space-y-6">
-                        <div>
-                            <label class="block text-sm font-semibold text-gray-700 mb-2">New Pack Name</label>
-                            <input type="text" id="maker-name" placeholder="e.g. Deep Holy Panda" class="w-full bg-white/70 border border-black/10 rounded-xl px-4 py-2.5 text-gray-800 focus:outline-none focus:ring-2 focus:ring-orange-200">
+                    <!-- Quick Acoustic Presets -->
+                    <div class="mb-6">
+                        <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Acoustic Presets</label>
+                        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                            <button type="button" onclick="selectStudioPreset('bubble')" class="px-3 py-2 bg-white/70 hover:bg-orange-50 hover:border-orange-300 border border-black/10 rounded-xl text-xs font-bold text-gray-700 transition-all text-left">
+                                🌟 Bubble Pop
+                                <span class="block text-[10px] text-gray-400 font-normal">Zoom 75 + Morandi</span>
+                            </button>
+                            <button type="button" onclick="selectStudioPreset('creamy')" class="px-3 py-2 bg-white/70 hover:bg-orange-50 hover:border-orange-300 border border-black/10 rounded-xl text-xs font-bold text-gray-700 transition-all text-left">
+                                🧈 Creamy Butter
+                                <span class="block text-[10px] text-gray-400 font-normal">Ultra-lubed linear</span>
+                            </button>
+                            <button type="button" onclick="selectStudioPreset('calm')" class="px-3 py-2 bg-white/70 hover:bg-orange-50 hover:border-orange-300 border border-black/10 rounded-xl text-xs font-bold text-gray-700 transition-all text-left">
+                                ☁️ Whisper Calm
+                                <span class="block text-[10px] text-gray-400 font-normal">Soft pillowy cream</span>
+                            </button>
+                            <button type="button" onclick="selectStudioPreset('thock')" class="px-3 py-2 bg-white/70 hover:bg-orange-50 hover:border-orange-300 border border-black/10 rounded-xl text-xs font-bold text-gray-700 transition-all text-left">
+                                🪵 Deep Thock
+                                <span class="block text-[10px] text-gray-400 font-normal">Heavy POM bottom-out</span>
+                            </button>
                         </div>
-                        <input type="hidden" id="maker-base" value="__procedural__">
-                        
-                        <div class="grid grid-cols-2 gap-6">
+                    </div>
+
+                    <div class="space-y-6">
+                        <!-- Pack Name & Base Profile -->
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             <div>
-                                <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Switch Type</label>
-                                <select id="proc-type" class="w-full bg-white/70 border border-black/10 rounded-xl px-3 py-2 text-gray-800 focus:ring-2 focus:ring-orange-200" onchange="applyPreset(); previewMaker()">
-                                    <option value="red">Linear (Red)</option>
-                                    <option value="black">Linear (Black)</option>
-                                    <option value="brown">Tactile (Brown)</option>
-                                    <option value="blue">Clicky (Blue)</option>
-                                    <option value="white">Clicky (White)</option>
+                                <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">New Pack Name</label>
+                                <input type="text" id="maker-name" placeholder="e.g. My Creamy Thock" class="w-full bg-white/70 border border-black/10 rounded-xl px-4 py-2.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-orange-200">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Base Acoustic Profile</label>
+                                <select id="maker-base" class="w-full bg-white/70 border border-black/10 rounded-xl px-3 py-2.5 text-sm text-gray-800 focus:ring-2 focus:ring-orange-200" onchange="previewMaker()">
+                                    <option value="bubble_heaven">🌟 Bubble Heaven (WS Morandi on Zoom 75)</option>
+                                    <option value="creamy_butter">🧈 Creamy Butter (Feather-Lubed Linear)</option>
+                                    <option value="creamy_lite_calm">☁️ Creamy Lite Calm (Whisper Cream)</option>
+                                    <option value="cherry_mx_black_pbt">🪵 Cherry MX Black PBT (Deep Heavy Thock)</option>
+                                    <option value="banana_split_lubed">🍌 Banana Split Lubed (Silky Marbly)</option>
+                                    <option value="cherry_mx_red_pbt">🍒 Cherry MX Red PBT (Clean Snappy Linear)</option>
+                                    <option value="__procedural__">🔮 Procedural Physical Synthesizer</option>
                                 </select>
                             </div>
+                        </div>
+
+                        <!-- Sliders: Lube & Thock -->
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
                             <div>
-                                <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Spring Weight</label>
-                                <div class="flex items-center space-x-3">
-                                    <input type="range" id="proc-weight" min="30" max="100" value="45" class="flex-grow custom-slider" oninput="document.getElementById('weight-val').innerText = this.value + 'g'; previewMaker()">
-                                    <span id="weight-val" class="text-sm font-bold text-gray-700 w-10 text-right">45g</span>
+                                <div class="flex justify-between items-center mb-1">
+                                    <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider">Lube / Smoothness</label>
+                                    <span id="lube-val" class="text-xs font-bold text-gray-700">75% (Krytox 205g0)</span>
                                 </div>
+                                <input type="range" id="proc-lube" min="0" max="100" value="75" class="w-full custom-slider" oninput="updateSliderLabels(); previewMaker()">
+                            </div>
+                            <div>
+                                <div class="flex justify-between items-center mb-1">
+                                    <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider">Cavity Thock / Deepness</label>
+                                    <span id="thock-val" class="text-xs font-bold text-gray-700">80% (Deep Thock)</span>
+                                </div>
+                                <input type="range" id="proc-thock" min="0" max="100" value="80" class="w-full custom-slider" oninput="updateSliderLabels(); previewMaker()">
                             </div>
                         </div>
 
-                        <!-- Lube and Origns -->
-                        <div class="grid grid-cols-2 gap-6">
+                        <!-- Sliders: Pitch & Weight -->
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
                             <div>
-                                <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Lube Amount</label>
-                                <div class="flex items-center space-x-3">
-                                    <input type="range" id="proc-lube" min="0" max="100" value="20" class="flex-grow custom-slider" oninput="previewMaker()">
+                                <div class="flex justify-between items-center mb-1">
+                                    <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider">Pitch / Tone Tuning</label>
+                                    <span id="pitch-val" class="text-xs font-bold text-gray-700">1.00x (Natural)</span>
                                 </div>
+                                <input type="range" id="proc-pitch" min="70" max="140" value="100" class="w-full custom-slider" oninput="updateSliderLabels(); previewMaker()">
                             </div>
                             <div>
-                                <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">O-Rings / Dampening</label>
-                                <div class="flex items-center space-x-3">
-                                    <input type="range" id="proc-orings" min="0" max="100" value="0" class="flex-grow custom-slider" oninput="previewMaker()">
+                                <div class="flex justify-between items-center mb-1">
+                                    <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider">Spring Weight / Impact</label>
+                                    <span id="weight-val" class="text-xs font-bold text-gray-700">55g (Medium)</span>
                                 </div>
+                                <input type="range" id="proc-weight" min="35" max="80" value="55" class="w-full custom-slider" oninput="updateSliderLabels(); previewMaker()">
+                            </div>
+                        </div>
+
+                        <!-- Foam & Switch Style -->
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                            <div>
+                                <div class="flex justify-between items-center mb-1">
+                                    <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider">Foam Mod / Dampening</label>
+                                    <span id="foam-val" class="text-xs font-bold text-gray-700">50% (PE Foam Mod)</span>
+                                </div>
+                                <input type="range" id="proc-orings" min="0" max="100" value="50" class="w-full custom-slider" oninput="updateSliderLabels(); previewMaker()">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Switch Character</label>
+                                <select id="proc-type" class="w-full bg-white/70 border border-black/10 rounded-xl px-3 py-2 text-sm text-gray-800 focus:ring-2 focus:ring-orange-200" onchange="previewMaker()">
+                                    <option value="cream">Creamy Linear (Deep & Pillowy)</option>
+                                    <option value="linear">Classic Linear (Snappy & Clean)</option>
+                                    <option value="tactile">Tactile (Pronounced Bump)</option>
+                                    <option value="clicky">Crystalline Click (Mechanical Leaf)</option>
+                                </select>
                             </div>
                         </div>
                     </div>
 
-                    <div class="mt-8 pt-6 border-t border-black/10 flex justify-between items-center">
-                        <textarea id="maker-tester" placeholder="Type here to test sounds..." class="w-2/3 bg-white/60 text-gray-800 font-mono rounded-xl p-3 resize-none focus:outline-none focus:ring-2 focus:ring-orange-200 border border-black/10" rows="1" oninput="resetTestBoxMaker()"></textarea>
-                        <button onclick="saveMaker()" class="bg-[#403d39] hover:bg-[#2b2a27] text-white font-bold py-3 px-8 rounded-xl shadow-sm transition-all active:scale-95">Save Pack</button>
+                    <!-- Interactive Tester Box -->
+                    <div class="mt-8 pt-6 border-t border-black/10 flex flex-col sm:flex-row gap-4 justify-between items-center">
+                        <textarea id="maker-tester" placeholder="Type here to test sounds (Space, Enter, Backspace, or Letters)..." class="w-full sm:w-2/3 bg-white/80 text-gray-800 font-mono text-sm rounded-xl p-3 resize-none focus:outline-none focus:ring-2 focus:ring-orange-200 border border-black/10 shadow-inner" rows="2" oninput="resetTestBoxMaker()"></textarea>
+                        <button onclick="saveMaker()" class="w-full sm:w-auto bg-[#403d39] hover:bg-[#2b2a27] text-white font-bold py-3.5 px-8 rounded-xl shadow-md transition-all active:scale-95 shrink-0">
+                            Save Custom Pack
+                        </button>
                     </div>
                 </div>
             </div>
@@ -470,61 +529,194 @@
     function resetTestBoxMaker() {
         const box = document.getElementById('maker-tester');
         clearTimeout(makerTestBoxTimer);
-        makerTestBoxTimer = setTimeout(() => box.value = '', 800);
+        makerTestBoxTimer = setTimeout(() => box.value = '', 1200);
     }
-</script>
-</body>
-</html>
 
-<script>
-    function applyPreset() {
-        const type = document.getElementById('proc-type').value;
-        const weight = document.getElementById('proc-weight');
-        if (type === 'red') weight.value = 45;
-        else if (type === 'black') weight.value = 60;
-        else if (type === 'brown') weight.value = 55;
-        else if (type === 'blue') weight.value = 60;
-        else if (type === 'white') weight.value = 50;
-        document.getElementById('weight-val').innerText = weight.value + 'g';
+    function updateSliderLabels() {
+        const lubeEl = document.getElementById('proc-lube');
+        const thockEl = document.getElementById('proc-thock');
+        const pitchEl = document.getElementById('proc-pitch');
+        const weightEl = document.getElementById('proc-weight');
+        const foamEl = document.getElementById('proc-orings');
+
+        if (!lubeEl || !thockEl || !pitchEl || !weightEl || !foamEl) return;
+
+        const lube = parseInt(lubeEl.value);
+        const thock = parseInt(thockEl.value);
+        const pitch = parseInt(pitchEl.value);
+        const weight = parseInt(weightEl.value);
+        const foam = parseInt(foamEl.value);
+
+        const lubeText = lube < 30 ? lube + '% (Dry Clack)' : lube < 70 ? lube + '% (Lubed)' : lube + '% (Krytox 205g0)';
+        document.getElementById('lube-val').innerText = lubeText;
+
+        const thockText = thock < 40 ? thock + '% (Thin)' : thock < 75 ? thock + '% (Solid Thock)' : thock + '% (Heavy Deep Thock)';
+        document.getElementById('thock-val').innerText = thockText;
+
+        const pitchRatio = (pitch / 100.0).toFixed(2);
+        const pitchText = pitch < 90 ? pitchRatio + 'x (Deep Bass)' : pitch > 110 ? pitchRatio + 'x (Higher Pitch)' : pitchRatio + 'x (Natural)';
+        document.getElementById('pitch-val').innerText = pitchText;
+
+        const weightText = weight < 45 ? weight + 'g (Feather)' : weight > 65 ? weight + 'g (Heavy)' : weight + 'g (Medium)';
+        document.getElementById('weight-val').innerText = weightText;
+
+        const foamText = foam < 25 ? foam + '% (Open Case)' : foam < 70 ? foam + '% (PE Foam)' : foam + '% (Heavy Damped)';
+        document.getElementById('foam-val').innerText = foamText;
+    }
+
+    function selectStudioPreset(preset) {
+        if (preset === 'bubble') {
+            document.getElementById('maker-base').value = 'bubble_heaven';
+            document.getElementById('proc-type').value = 'cream';
+            document.getElementById('proc-lube').value = 85;
+            document.getElementById('proc-thock').value = 85;
+            document.getElementById('proc-pitch').value = 98;
+            document.getElementById('proc-weight').value = 53;
+            document.getElementById('proc-orings').value = 60;
+        } else if (preset === 'creamy') {
+            document.getElementById('maker-base').value = 'creamy_butter';
+            document.getElementById('proc-type').value = 'cream';
+            document.getElementById('proc-lube').value = 95;
+            document.getElementById('proc-thock').value = 90;
+            document.getElementById('proc-pitch').value = 94;
+            document.getElementById('proc-weight').value = 45;
+            document.getElementById('proc-orings').value = 70;
+        } else if (preset === 'calm') {
+            document.getElementById('maker-base').value = 'creamy_lite_calm';
+            document.getElementById('proc-type').value = 'cream';
+            document.getElementById('proc-lube').value = 80;
+            document.getElementById('proc-thock').value = 70;
+            document.getElementById('proc-pitch').value = 100;
+            document.getElementById('proc-weight').value = 42;
+            document.getElementById('proc-orings').value = 50;
+        } else if (preset === 'thock') {
+            document.getElementById('maker-base').value = 'cherry_mx_black_pbt';
+            document.getElementById('proc-type').value = 'linear';
+            document.getElementById('proc-lube').value = 60;
+            document.getElementById('proc-thock').value = 95;
+            document.getElementById('proc-pitch').value = 88;
+            document.getElementById('proc-weight').value = 68;
+            document.getElementById('proc-orings').value = 40;
+        }
+        updateSliderLabels();
+        previewMaker();
     }
 
     let previewDebounceTimer = null;
     function previewMaker() {
         clearTimeout(previewDebounceTimer);
         previewDebounceTimer = setTimeout(() => {
+            const baseEl = document.getElementById('maker-base');
+            const pitchEl = document.getElementById('proc-pitch');
+            const weightEl = document.getElementById('proc-weight');
+            const lubeEl = document.getElementById('proc-lube');
+            const foamEl = document.getElementById('proc-orings');
+            const typeEl = document.getElementById('proc-type');
+
+            if (!baseEl || !pitchEl || !weightEl || !lubeEl || !foamEl || !typeEl) return;
+
+            const base = baseEl.value;
+            const pitchVal = parseFloat(pitchEl.value) / 100.0;
+            const weightVal = parseFloat(weightEl.value);
+            const lubeVal = parseFloat(lubeEl.value) / 100.0;
+            const foamVal = parseFloat(foamEl.value) / 100.0;
+            const volMult = 0.85 + (weightVal - 35.0) / 100.0;
+
             const procedural = {
-                switch_type: document.getElementById('proc-type').value,
-                spring_weight: parseFloat(document.getElementById('proc-weight').value),
-                lube_amount: parseFloat(document.getElementById('proc-lube').value) / 100.0,
-                pitch: 1.0,
+                switch_type: typeEl.value,
+                spring_weight: weightVal,
+                lube_amount: lubeVal,
+                pitch: pitchVal,
                 keycap_material: 'pbt',
-                plate_material: 'brass',
-                mounting_style: 'tray',
-                foam_mod: 0.50,
+                plate_material: 'pom',
+                mounting_style: 'gasket',
+                foam_mod: foamVal,
                 case_material: 'aluminum',
-                o_rings: parseFloat(document.getElementById('proc-orings').value) / 100.0
+                o_rings: 0.0
             };
-            safeIpc({ type: "preview_maker", value: { base: '__procedural__', pitch: 1.0, volume: 1.0, procedural: procedural }});
+            safeIpc({ type: "preview_maker", value: { base: base, pitch: pitchVal, volume: volMult, procedural: procedural }});
         }, 30);
     }
 
+    function appendCustomPackCard(packId, displayName, baseType) {
+        const grid = document.getElementById('packs-grid');
+        if (!grid) return;
+
+        let existing = document.getElementById('pack-' + packId);
+        if (existing) {
+            selectPack(packId);
+            return;
+        }
+
+        const card = document.createElement('div');
+        card.id = 'pack-' + packId;
+        card.setAttribute('onclick', "selectPack('" + packId + "')");
+        card.dataset.fav = "false";
+        card.className = "pack-card relative backdrop-blur-md hover:bg-white hover:-translate-y-1 hover:shadow-xl border bg-white/50 border-white/50 rounded-xl p-3.5 transition-all duration-300 ease-[cubic-bezier(0.25,0.8,0.25,1)] cursor-pointer flex flex-col justify-between h-[146px] overflow-hidden shadow-sm group";
+
+        card.innerHTML = `
+            <svg class="absolute -right-6 -top-4 w-40 h-40 text-gray-500 opacity-5 pointer-events-none transform rotate-12 transition-transform duration-500 group-hover:rotate-6 group-hover:scale-110" viewBox="0 0 100 100">
+                <path fill="currentColor" d="M10 30 h80 v40 h-80 z M15 35 h8 v8 h-8 z M25 35 h8 v8 h-8 z M35 35 h8 v8 h-8 z M45 35 h8 v8 h-8 z M55 35 h8 v8 h-8 z M65 35 h8 v8 h-8 z M75 35 h8 v8 h-8 z M18 48 h8 v8 h-8 z M28 48 h8 v8 h-8 z M38 48 h8 v8 h-8 z M48 48 h8 v8 h-8 z M58 48 h8 v8 h-8 z M68 48 h8 v8 h-8 z M30 61 h40 v8 h-40 z"/>
+            </svg>
+            <div class="z-10">
+                <div class="w-9 h-9 mb-1.5 transition-transform duration-300 group-hover:scale-110 group-active:scale-95 flex items-center justify-center text-2xl">
+                    ✨
+                </div>
+                <h3 class="font-bold text-gray-800 text-[14px] leading-tight truncate tracking-tight">${displayName}</h3>
+                <p class="text-[10px] text-gray-500 mt-1 font-medium">Custom Tuned Switch</p>
+            </div>
+            <div class="z-10 flex justify-between items-end pt-1">
+                <span class="text-[9px] font-semibold text-gray-400 tracking-wider">Custom</span>
+                <div class="flex items-center space-x-3">
+                    <button onclick="toggleFav(event, '${packId}')" class="text-gray-300 hover:text-yellow-500 transition-all duration-200 active:scale-90 hover:scale-110">
+                        <svg id="fav-${packId}" class="w-5 h-5 text-gray-400 drop-shadow-sm" viewBox="0 0 20 20" stroke="currentColor" stroke-width="1.5" fill="none"><path stroke-linecap="round" stroke-linejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"></path></svg>
+                    </button>
+                    <button onclick="deletePack(event, '${packId}')" class="text-gray-300 hover:text-red-500 transition-all duration-200 active:scale-90 hover:scale-110">
+                        <svg class="w-5 h-5 drop-shadow-sm" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                    </button>
+                </div>
+            </div>
+        `;
+        grid.prepend(card);
+        selectPack(packId);
+    }
+
     function saveMaker() {
-        const name = document.getElementById('maker-name').value.trim();
-        if(!name) { alert("Please enter a name for your custom pack."); return; }
+        const nameInput = document.getElementById('maker-name');
+        const rawName = nameInput.value.trim();
+        if (!rawName) {
+            alert("Please enter a name for your custom pack.");
+            nameInput.focus();
+            return;
+        }
+        const safeName = rawName.toLowerCase().replace(/[^a-z0-9_-]/g, '_');
+        const base = document.getElementById('maker-base').value;
+        const pitchVal = parseFloat(document.getElementById('proc-pitch').value) / 100.0;
+        const weightVal = parseFloat(document.getElementById('proc-weight').value);
+        const lubeVal = parseFloat(document.getElementById('proc-lube').value) / 100.0;
+        const foamVal = parseFloat(document.getElementById('proc-orings').value) / 100.0;
+        const volMult = 0.85 + (weightVal - 35.0) / 100.0;
+
         const procedural = {
             switch_type: document.getElementById('proc-type').value,
-            spring_weight: parseFloat(document.getElementById('proc-weight').value),
-            lube_amount: parseFloat(document.getElementById('proc-lube').value) / 100.0,
-            pitch: 1.0,
+            spring_weight: weightVal,
+            lube_amount: lubeVal,
+            pitch: pitchVal,
             keycap_material: 'pbt',
-            plate_material: 'brass',
-            mounting_style: 'tray',
-            foam_mod: 0.50,
+            plate_material: 'pom',
+            mounting_style: 'gasket',
+            foam_mod: foamVal,
             case_material: 'aluminum',
-            o_rings: parseFloat(document.getElementById('proc-orings').value) / 100.0
+            o_rings: 0.0
         };
-        safeIpc({ type: "save_maker", value: { name: name, base: '__procedural__', pitch: 1.0, volume: 1.0, procedural: procedural }});
+        safeIpc({ type: "save_maker", value: { name: safeName, base: base, pitch: pitchVal, volume: volMult, procedural: procedural }});
+        appendCustomPackCard(safeName, rawName, base);
         switchTab('packs');
-        setTimeout(() => alert("Custom Pack '" + name + "' saved successfully! Restart the app to see it in your list."), 300);
     }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        updateSliderLabels();
+    });
 </script>
+</body>
+</html>

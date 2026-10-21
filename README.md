@@ -8,7 +8,7 @@
 [![Language](https://img.shields.io/badge/language-Rust%202021-DEA584.svg?style=for-the-badge&logo=rust&logoColor=black)](https://www.rust-lang.org/)
 [![Audio Engine](https://img.shields.io/badge/dsp-zero--copy%20i16%20PCM-000000.svg?style=for-the-badge&logo=soundcharts&logoColor=white)](https://github.com/Dharmit-Parmar/Thock-for-macOS-)
 [![Memory Footprint](https://img.shields.io/badge/memory-%3C10MB%20RSS-2ea44f.svg?style=for-the-badge)](https://github.com/Dharmit-Parmar/Thock-for-macOS-)
-[![Tests](https://img.shields.io/badge/tests-24%2F24%20passed-brightgreen.svg?style=for-the-badge)](https://github.com/Dharmit-Parmar/Thock-for-macOS-)
+[![Tests](https://img.shields.io/badge/tests-26%2F26%20passed-brightgreen.svg?style=for-the-badge)](https://github.com/Dharmit-Parmar/Thock-for-macOS-)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg?style=for-the-badge)](LICENSE)
 
 <br />

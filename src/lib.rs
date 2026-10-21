@@ -1152,7 +1152,7 @@ pub fn run(is_cli: bool) {
                     let playback_vol = (base_vol * velocity_mult).min(1.0);
 
                     if let Some(proc_config) = &pack.procedural {
-                        let proc = dsp::ProceduralSwitch::new(proc_config, is_keyup, velocity_mult);
+                        let proc = dsp::ProceduralSwitch::new(proc_config, is_keyup, velocity_mult, keycode);
                         let _ = handle.play_raw(proc.amplify(playback_vol));
                     } else if !is_keyup {
                         let key_map = keymap::get_key_map();
@@ -2344,6 +2344,7 @@ pub fn run(is_cli: bool) {
                                     if let Some(pack) = load_pack(&new_dir) {
                                         *ipc_current_pack.write().unwrap() = Some(pack);
                                         *ipc_current_pack_name.write().unwrap() = name.to_string();
+                                        save_settings(&ipc_packs_dir_clone.join(".settings.json"), VOL.load(std::sync::atomic::Ordering::Relaxed), name);
                                     }
                                 }
                             }
@@ -2936,6 +2937,52 @@ mod tests {
         // Dropping the loop source must free all PCM memory completely
         drop(src);
         assert_eq!(weak.strong_count(), 0, "PCM memory must drop to 0 strong refs when loop source is dropped");
+    }
+
+    #[test]
+    fn test_procedural_switch_physical_acoustics() {
+        let config = crate::dsp::ProceduralConfig::default();
+        let mut switch = crate::dsp::ProceduralSwitch::new(&config, false, 1.0, 0);
+
+        let mut samples = Vec::new();
+        let mut max_abs = 0.0f32;
+        let mut sum = 0.0f64;
+
+        while let Some(s) = switch.next() {
+            assert!(s.is_finite(), "Procedural sample must be finite");
+            assert!(s >= -1.0 && s <= 1.0, "Sample must be bounded in [-1.0, 1.0]");
+            max_abs = max_abs.max(s.abs());
+            sum += s as f64;
+            samples.push(s);
+        }
+
+        assert!(!samples.is_empty(), "Procedural switch must generate samples");
+        assert!(max_abs > 0.40, "Switch bottom-out must have tactile presence (peak >= 0.40)");
+        assert!(max_abs <= 0.99, "Switch bottom-out must retain headroom (peak <= 0.99)");
+        
+        let mean = (sum / samples.len() as f64).abs();
+        assert!(mean < 0.015, "Switch contact wavelet must have near-zero DC offset (< 0.015)");
+        assert_eq!(rodio::Source::current_frame_len(&switch), Some(0), "Completed switch voice must report 0 remaining frames");
+
+        // Keyup top-out test: must be whisper-soft and damped
+        let mut keyup = crate::dsp::ProceduralSwitch::new(&config, true, 1.0, 0);
+        let mut keyup_max = 0.0f32;
+        while let Some(s) = keyup.next() {
+            keyup_max = keyup_max.max(s.abs());
+        }
+        assert!(keyup_max < max_abs * 0.35, "Keyup top-out must be whisper-soft (< 35% of keydown)");
+    }
+
+    #[test]
+    fn test_procedural_switch_spacebar_geometry() {
+        let config = crate::dsp::ProceduralConfig::default();
+        let space = crate::dsp::ProceduralSwitch::new(&config, false, 1.0, 49);
+        let alpha = crate::dsp::ProceduralSwitch::new(&config, false, 1.0, 0);
+
+        let space_dur = rodio::Source::total_duration(&space).unwrap();
+        let alpha_dur = rodio::Source::total_duration(&alpha).unwrap();
+
+        assert!(space_dur > alpha_dur, "Spacebar (6.25u cavity) must have longer acoustic ringdown than 1u alpha");
     }
 }
 
