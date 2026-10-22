@@ -304,9 +304,9 @@ impl SeamlessLoopSource {
                 // Remove low-frequency traffic/wind rumble while retaining the rain's crisp drop transients.
                 Some(crate::dsp::Biquad::highpass(sample_rate as f32, 120.0, 0.707)),
                 Some(crate::dsp::Biquad::highpass(sample_rate as f32, 120.0, 0.707)),
-                // Calming acoustic warmth: 2200 Hz lowpass (Q=0.60) prevents ear-canal resonant sizzle and headache-inducing fatigue
-                Some(crate::dsp::Biquad::lowpass(sample_rate as f32, 2200.0, 0.60)),
-                Some(crate::dsp::Biquad::lowpass(sample_rate as f32, 2200.0, 0.60)),
+                // Pure transparent acoustic pass: preserves authentic Minecraft drop clarity and air without muffling
+                None,
+                None,
                 0.0,
             ),
             AsmrLoopKind::Wind => {
