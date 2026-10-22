@@ -2403,6 +2403,7 @@ pub fn run(is_cli: bool) {
                             }
                         }
                         "quit" => {
+                            purge_all_asmr_buffers();
                             std::process::exit(0);
                         }
                         _ => {}
@@ -2475,6 +2476,9 @@ pub fn run(is_cli: bool) {
                         }
                     }
                 }
+            }
+            tao::event::Event::LoopDestroyed => {
+                purge_all_asmr_buffers();
             }
             _ => {}
         }
@@ -2766,6 +2770,7 @@ mod tests {
         purge_rain_buffer();
         let rain = get_rain_buffer().expect("rain buffer reloads on demand");
         assert_eq!(rain.channels, 2);
+        purge_rain_buffer();
     }
 
     #[test]
