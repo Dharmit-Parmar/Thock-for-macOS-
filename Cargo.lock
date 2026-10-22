@@ -2993,11 +2993,13 @@ dependencies = [
 name = "thock"
 version = "0.1.0"
 dependencies = [
+ "cocoa",
  "colored",
  "core-foundation",
  "core-graphics",
  "inquire",
  "muda",
+ "objc",
  "rodio",
  "rustyline",
  "serde",

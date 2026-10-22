@@ -4,9 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Thock - Sound Packs</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        <!-- TAILWIND_JS -->
+    </script>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
         
         body {
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -264,7 +265,7 @@
         <!-- VIEW: ASMR -->
         <div id="view-asmr" class="h-full flex flex-col p-6 overflow-hidden hidden">
             <div class="max-w-2xl mx-auto w-full h-full flex flex-col">
-                <div class="bg-white/60 p-8 rounded-xl flex-grow overflow-y-auto space-y-10 pb-10 border border-white/60 shadow-sm backdrop-blur-md">
+                <div class="bg-white/60 p-6 rounded-xl flex-grow overflow-y-auto space-y-6 pb-6 border border-white/60 shadow-sm backdrop-blur-md">
                     <div>
                         <h2 class="text-2xl font-bold text-gray-800">Background ASMR</h2>
                         <p class="text-gray-500 mt-1 font-medium">Set the perfect atmosphere.</p>
@@ -309,7 +310,8 @@
                         <h3 class="text-lg font-bold text-gray-800 border-b border-black/10 pb-2">Rain</h3>
                         <div class="space-y-3">
                             <div class="flex justify-between text-xs font-bold text-gray-500 uppercase tracking-wider">
-                                <span>Rain Intensity</span>
+                                <span>Rain Speed & Density</span>
+                                <span id="asmr-rain-speed-val" class="text-amber-600 font-semibold">1.00x</span>
                             </div>
                             <input type="range" id="asmr-rain-density" min="0" max="100" value="50" class="w-full custom-slider" oninput="updateAsmr()">
                         </div>
@@ -373,6 +375,7 @@
     };
 
     let volSaveTimer = null;
+    let makerTestBoxTimer = null;
     function setVolume(val) {
         document.getElementById('vol-display').innerText = val + '%';
         safeIpc({ type: "set_volume", value: parseInt(val) });
@@ -420,15 +423,15 @@
         
         const btn = e.currentTarget;
         const svg = btn.querySelector('svg');
-        const isFav = svg.classList.contains('text-yellow-600');
+        const isFav = card.dataset.fav === "true";
         
         if (isFav) {
-            svg.classList.remove('text-yellow-600', 'fill-current');
+            svg.classList.remove('text-yellow-500', 'text-yellow-600', 'fill-current');
             svg.classList.add('text-gray-400');
             card.dataset.fav = "false";
         } else {
             svg.classList.remove('text-gray-400');
-            svg.classList.add('text-yellow-600', 'fill-current');
+            svg.classList.add('text-yellow-500', 'fill-current');
             card.dataset.fav = "true";
         }
         sortPacks();
@@ -508,12 +511,17 @@
         const windOn = document.getElementById('asmr-wind-on').checked;
         const thunderOn = document.getElementById('asmr-thunder-on').checked;
         
+        const rainDens = parseInt(document.getElementById('asmr-rain-density').value);
+        const speedVal = (0.75 + rainDens * 0.005).toFixed(2);
+        const speedLabel = document.getElementById('asmr-rain-speed-val');
+        if (speedLabel) speedLabel.textContent = speedVal + 'x';
+
         const settings = {
             rain_on: rainOn,
             wind_on: windOn,
             thunder_on: thunderOn,
             master_vol: parseInt(document.getElementById('asmr-vol').value),
-            rain_density: parseInt(document.getElementById('asmr-rain-density').value),
+            rain_density: rainDens,
             rain_vol: parseInt(document.getElementById('asmr-rain-vol').value),
             wind_gust: parseInt(document.getElementById('asmr-wind-gust').value),
             wind_vol: parseInt(document.getElementById('asmr-wind-vol').value),
@@ -639,7 +647,7 @@
     }
 
     function appendCustomPackCard(packId, displayName, baseType) {
-        const grid = document.getElementById('packs-grid');
+        const grid = document.getElementById('packs-container');
         if (!grid) return;
 
         let existing = document.getElementById('pack-' + packId);

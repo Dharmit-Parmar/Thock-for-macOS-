@@ -5,6 +5,8 @@ edition = "2021"
 default-run = "thock-app"
 
 [dependencies]
+cocoa = "0.25"
+objc = "0.2"
 core-graphics = "0.23"
 core-foundation = "0.9"
 rodio = "0.19"

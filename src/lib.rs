@@ -1,6 +1,6 @@
 mod assets;
 mod keymap;
-mod dsp;
+pub mod dsp;
 
 use rustyline::completion::{Completer, Pair};
 use rustyline::error::ReadlineError;
@@ -79,6 +79,11 @@ static RAIN_FIELD_OGG: &[u8] = include_bytes!("../assets/asmr/rain-field.ogg");
 #[inline]
 fn rain_density_drive(density: u32) -> f32 {
     0.85 + density.min(100) as f32 * 0.005
+}
+
+#[inline]
+fn rain_speed_rate(density: u32) -> f32 {
+    0.75 + density.min(100) as f32 * 0.005
 }
 
 fn decode_audio(bytes: &'static [u8], crossfade_loop: bool, max_seconds: Option<u32>) -> Option<AsmrBuffer> {
@@ -254,14 +259,15 @@ pub struct SeamlessLoopSource {
     channels: u16,
     sample_rate: u32,
     cursor: usize,
+    frame_pos: f64,
+    speed_rate: f64,
     played_frames: u64,
     fade_in_frames: u64,
     inv_fade_in: f32,
-    rain_loop_start: usize,
+    pub rain_loop_start: usize,
     rain_crossfade_frames: usize,
     inv_crossfade_frames: f32,
     fade_start: usize,
-    fade_start_sample: usize,
     cached_g1: f32,
     cached_g2: f32,
     cached_frame: usize,
@@ -290,7 +296,6 @@ impl SeamlessLoopSource {
             0
         };
         let fade_start = total_frames.saturating_sub(rain_crossfade_frames);
-        let fade_start_sample = fade_start * channels as usize;
         let inv_crossfade_frames = if rain_crossfade_frames > 0 {
             1.0 / rain_crossfade_frames as f32
         } else {
@@ -323,11 +328,20 @@ impl SeamlessLoopSource {
             }
         };
 
+        let initial_density = crate::dsp::ASMR_RAIN_DENS.load(Ordering::Relaxed);
+        let speed_rate = if kind == AsmrLoopKind::Rain {
+            rain_speed_rate(initial_density) as f64
+        } else {
+            1.0
+        };
+
         Self {
             samples,
             channels,
             sample_rate,
             cursor: 0,
+            frame_pos: 0.0,
+            speed_rate,
             played_frames: 0,
             fade_in_frames,
             inv_fade_in,
@@ -335,7 +349,6 @@ impl SeamlessLoopSource {
             rain_crossfade_frames,
             inv_crossfade_frames,
             fade_start,
-            fade_start_sample,
             cached_g1: 1.0,
             cached_g2: 0.0,
             cached_frame: usize::MAX,
@@ -343,7 +356,7 @@ impl SeamlessLoopSource {
             filter_right,
             warmth_left,
             warmth_right,
-            density_cache: rain_density_drive(crate::dsp::ASMR_RAIN_DENS.load(Ordering::Relaxed)),
+            density_cache: rain_density_drive(initial_density),
             last_wind_fc,
             kind,
         }
@@ -356,52 +369,64 @@ impl Iterator for SeamlessLoopSource {
     #[inline(always)]
     fn next(&mut self) -> Option<f32> {
         if self.samples.is_empty() { return None; }
-        if self.cursor >= self.samples.len() {
-            let total_frames = self.samples.len() / self.channels as usize;
-            let restart_frame = if total_frames > 0 {
-                (self.rain_loop_start + self.rain_crossfade_frames) % total_frames
-            } else {
-                0
-            };
-            self.cursor = restart_frame * self.channels as usize;
-            if self.cursor >= self.samples.len() {
-                self.cursor = 0;
-            }
-        }
-        let ch_idx = if self.channels == 2 { self.cursor & 1 } else { self.cursor % self.channels as usize };
-        let mut sample = self.samples[self.cursor] as f32 * 0.000030517578_f32;
+        let total_frames = self.samples.len() / self.channels as usize;
+        if total_frames == 0 { return None; }
 
         match self.kind {
             AsmrLoopKind::Rain => {
-                if self.rain_crossfade_frames > 0 && self.cursor >= self.fade_start_sample {
-                    let frame = self.cursor / self.channels as usize;
-                    if frame != self.cached_frame {
-                        let t = (frame - self.fade_start) as f32 * self.inv_crossfade_frames;
-                        // Equal-power cubic polynomial approximation P(t) = 1 - t^2 (1.3431458 - 0.3431458 t)
-                        // Max power error is 0.055% (0.0024 dB ripple). Zero transcendental trig calls!
+                if self.frame_pos >= total_frames as f64 {
+                    let loop_span = total_frames.saturating_sub(self.rain_loop_start + self.rain_crossfade_frames);
+                    if loop_span > 0 {
+                        let overshoot = self.frame_pos - total_frames as f64;
+                        self.frame_pos = (self.rain_loop_start + self.rain_crossfade_frames) as f64 + (overshoot % loop_span as f64);
+                    } else {
+                        self.frame_pos = 0.0;
+                    }
+                }
+
+                let ch_idx = if self.channels == 2 { self.cursor & 1 } else { 0 };
+                let f_idx = (self.frame_pos as usize).min(total_frames - 1);
+                let frac = (self.frame_pos - f_idx as f64) as f32;
+                let next_f_idx = (f_idx + 1).min(total_frames - 1);
+
+                let s0 = self.samples[f_idx * self.channels as usize + ch_idx] as f32 * 0.000030517578_f32;
+                let s1 = self.samples[next_f_idx * self.channels as usize + ch_idx] as f32 * 0.000030517578_f32;
+                let mut sample = s0 + frac * (s1 - s0);
+
+                if self.rain_crossfade_frames > 0 && f_idx >= self.fade_start {
+                    if f_idx != self.cached_frame {
+                        let t = ((self.frame_pos - self.fade_start as f64) as f32 * self.inv_crossfade_frames).clamp(0.0, 1.0);
                         let t2 = t * t;
                         self.cached_g1 = 1.0 - t2 * (1.3431458 - 0.3431458 * t);
                         let u = 1.0 - t;
                         let u2 = u * u;
                         self.cached_g2 = 1.0 - u2 * (1.3431458 - 0.3431458 * u);
-                        self.cached_frame = frame;
+                        self.cached_frame = f_idx;
                     }
-                    let loop_sample = self.samples[(self.rain_loop_start + frame - self.fade_start) * self.channels as usize + ch_idx] as f32 * 0.000030517578_f32;
+                    let loop_f_pos = self.rain_loop_start as f64 + (self.frame_pos - self.fade_start as f64);
+                    let lf_idx = (loop_f_pos as usize).min(total_frames - 1);
+                    let l_frac = (loop_f_pos - lf_idx as f64) as f32;
+                    let next_lf_idx = (lf_idx + 1).min(total_frames - 1);
+                    let ls0 = self.samples[lf_idx * self.channels as usize + ch_idx] as f32 * 0.000030517578_f32;
+                    let ls1 = self.samples[next_lf_idx * self.channels as usize + ch_idx] as f32 * 0.000030517578_f32;
+                    let loop_sample = ls0 + l_frac * (ls1 - ls0);
                     sample = sample * self.cached_g1 + loop_sample * self.cached_g2;
                 }
+
                 if ch_idx == 0 {
                     self.played_frames += 1;
-                    // Refresh density cache every 128 left-channel frames (~5.8ms): avoids
-                    // an atomic load every 22μs in the hot path without perceptible slider lag.
                     if self.played_frames & 127 == 0 {
-                        self.density_cache = rain_density_drive(crate::dsp::ASMR_RAIN_DENS.load(Ordering::Relaxed));
+                        let d = crate::dsp::ASMR_RAIN_DENS.load(Ordering::Relaxed);
+                        self.density_cache = rain_density_drive(d);
+                        self.speed_rate = rain_speed_rate(d) as f64;
                     }
                 }
+                if self.channels == 1 || ch_idx == 1 {
+                    self.frame_pos += self.speed_rate;
+                }
 
-                // 1. Scale by density drive
                 sample *= self.density_cache;
 
-                // Remove rumble before level shaping; keep the recorded broadband drop texture.
                 if ch_idx == 0 {
                     if let Some(filter) = &mut self.filter_left { sample = filter.process(sample); }
                     if let Some(warmth) = &mut self.warmth_left { sample = warmth.process(sample); }
@@ -413,8 +438,17 @@ impl Iterator for SeamlessLoopSource {
                 if self.played_frames < self.fade_in_frames {
                     sample *= self.played_frames as f32 * self.inv_fade_in;
                 }
+
+                self.cursor += 1;
+                Some(sample)
             }
             AsmrLoopKind::Wind => {
+                if self.cursor >= self.samples.len() {
+                    self.cursor = 0;
+                }
+                let ch_idx = if self.channels == 2 { self.cursor & 1 } else { self.cursor % self.channels as usize };
+                let mut sample = self.samples[self.cursor] as f32 * 0.000030517578_f32;
+
                 // Update aerodynamic lowpass filter tracking dynamic gust cutoff (hoisted to only update on change)
                 if ch_idx == 0 && (self.cursor & 127) == 0 {
                     let fc = (crate::dsp::ASMR_WIND_CUTOFF.load(Ordering::Relaxed) as f32).clamp(250.0, 1600.0);
@@ -445,11 +479,11 @@ impl Iterator for SeamlessLoopSource {
                     }
                 }
                 sample = crate::dsp::soft_limit(sample * 1.05);
+
+                self.cursor += 1;
+                Some(sample)
             }
         }
-
-        self.cursor += 1;
-        Some(sample)
     }
 }
 
@@ -738,6 +772,24 @@ fn vol_power_curve(v: u32) -> f32 {
         arr
     });
     lut[(v as usize).min(150)]
+}
+
+#[cfg(target_os = "macos")]
+pub fn set_macos_app_icon() {
+    unsafe {
+        use cocoa::appkit::{NSApp, NSApplication, NSImage};
+        use cocoa::base::nil;
+        use cocoa::foundation::NSData;
+
+        let icon_bytes = include_bytes!("../AppIcon.icns");
+        let data = NSData::dataWithBytes_length_(nil, icon_bytes.as_ptr() as *const _, icon_bytes.len() as u64);
+        let image = NSImage::initWithData_(NSImage::alloc(nil), data);
+        if image != nil {
+            let app = NSApp();
+            app.setApplicationIconImage_(image);
+            app.activateIgnoringOtherApps_(cocoa::base::YES);
+        }
+    }
 }
 
 pub fn run(is_cli: bool) {
@@ -1946,7 +1998,14 @@ pub fn run(is_cli: bool) {
         let _ = std::thread::Builder::new().stack_size(256 * 1024).spawn(audio_thread);
     }
 
-    let event_loop = tao::event_loop::EventLoop::new();
+    let mut event_loop = tao::event_loop::EventLoop::new();
+
+    #[cfg(target_os = "macos")]
+    {
+        use tao::platform::macos::{EventLoopExtMacOS, ActivationPolicy};
+        event_loop.set_activation_policy(ActivationPolicy::Regular);
+        set_macos_app_icon();
+    }
 
     // Setup native macOS menu bar so Cmd+Q, Cmd+M, Cmd+W work perfectly globally
     let menu_bar = muda::Menu::new();
@@ -2100,13 +2159,6 @@ pub fn run(is_cli: bool) {
             packs_html.push_str(&card);
         }
         
-        let mut packs_options = String::new();
-        for pack in &sorted_packs {
-            let display_name = pack.split("_").map(|w| { let mut c = w.chars(); match c.next() { None => String::new(), Some(f) => f.to_uppercase().collect::<String>() + c.as_str(), } }).collect::<Vec<_>>().join(" ");
-            let selected = if &current_pack_read == pack { "selected" } else { "" };
-            packs_options.push_str(&format!("<option value='{}' {}>{}</option>", pack, selected, display_name));
-        }
-        
         let ax_trusted = unsafe { AXIsProcessTrusted() };
         let ax_banner = if !ax_trusted {
             r#"<div class="bg-red-500/90 text-white p-4 rounded-xl mb-4 shadow-lg border border-red-400 flex flex-col sm:flex-row items-center justify-between gap-4">
@@ -2122,13 +2174,13 @@ pub fn run(is_cli: bool) {
         
         let current_vol = VOL.load(std::sync::atomic::Ordering::Relaxed).to_string();
         let final_html = html_template
+            .replace("<!-- TAILWIND_JS -->", include_str!("../assets/tailwind.min.js"))
             .replace("<!-- MAIN_LOGO -->", crate::assets::IMG_MAIN_LOGO)
             .replace("<!-- IMG_ICON_RAIN -->", crate::assets::IMG_ICON_RAIN)
             .replace("<!-- IMG_ICON_WIND -->", crate::assets::IMG_ICON_WIND)
             .replace("<!-- IMG_ICON_THUNDER -->", crate::assets::IMG_ICON_THUNDER)
             .replace("<!-- PACKS_LIST -->", &packs_html)
             .replace("<!-- VOL_VALUE -->", &current_vol)
-            .replace("<!-- PACK_OPTIONS -->", &packs_options)
             .replace("<!-- AX_WARNING -->", ax_banner);
 
         let ipc_packs_dir_clone = ipc_packs_dir.clone();
@@ -2392,6 +2444,11 @@ pub fn run(is_cli: bool) {
                         favorites.clone(),
                     ));
                 }
+                #[cfg(target_os = "macos")]
+                unsafe {
+                    use cocoa::appkit::{NSApp, NSApplication};
+                    NSApp().activateIgnoringOtherApps_(cocoa::base::YES);
+                }
             },
             tao::event::Event::WindowEvent { event: tao::event::WindowEvent::ModifiersChanged(state), .. } => {
                 modifiers = state;
@@ -2559,6 +2616,14 @@ mod tests {
         assert!((rain_density_drive(50) - 1.1).abs() < 0.001);
         assert!((rain_density_drive(100) - 1.35).abs() < f32::EPSILON);
         assert_eq!(rain_density_drive(150), rain_density_drive(100));
+    }
+
+    #[test]
+    fn test_rain_speed_rate_tracking_and_range() {
+        assert!((rain_speed_rate(0) - 0.75).abs() < f32::EPSILON);
+        assert!((rain_speed_rate(50) - 1.00).abs() < f32::EPSILON);
+        assert!((rain_speed_rate(100) - 1.25).abs() < f32::EPSILON);
+        assert_eq!(rain_speed_rate(150), rain_speed_rate(100));
     }
 
     #[test]
@@ -3009,6 +3074,100 @@ mod tests {
         let alpha_dur = rodio::Source::total_duration(&alpha).unwrap();
 
         assert!(space_dur > alpha_dur, "Spacebar (6.25u cavity) must have longer acoustic ringdown than 1u alpha");
+    }
+
+    #[test]
+    fn test_seamless_loop_source_perf() {
+        let rain = get_rain_buffer().expect("rain buffer should load");
+        let mut loop_src = SeamlessLoopSource::new(rain.samples.clone(), rain.channels, rain.sample_rate, AsmrLoopKind::Rain);
+        
+        // Warm up
+        for _ in 0..10_000 {
+            loop_src.next();
+        }
+
+        // Measure 1,000,000 samples (which is ~22.6 seconds of stereo 44.1kHz audio)
+        let n_samples = 1_000_000usize;
+        let t0 = std::time::Instant::now();
+        let mut dummy = 0.0f32;
+        for _ in 0..n_samples {
+            dummy += loop_src.next().unwrap();
+        }
+        let elapsed = t0.elapsed();
+        let ns_per_sample = elapsed.as_nanos() as f64 / n_samples as f64;
+        let msps = (n_samples as f64 / elapsed.as_secs_f64()) / 1_000_000.0;
+        
+        // Also measure crossfade region specifically (where lerp + polynomial crossfade blend runs)
+        // Advance cursor to fade_start
+        loop_src.frame_pos = (loop_src.fade_start + 10) as f64;
+        let t1 = std::time::Instant::now();
+        for _ in 0..n_samples {
+            dummy += loop_src.next().unwrap();
+        }
+        let elapsed_xfade = t1.elapsed();
+        let ns_xfade_per_sample = elapsed_xfade.as_nanos() as f64 / n_samples as f64;
+        let msps_xfade = (n_samples as f64 / elapsed_xfade.as_secs_f64()) / 1_000_000.0;
+
+        // Also measure Wind loop (dynamic biquad lowpass filtering + soft limiter)
+        let wind = get_wind_buffer().expect("wind buffer should load");
+        let mut wind_src = SeamlessLoopSource::new(wind.samples.clone(), wind.channels, wind.sample_rate, AsmrLoopKind::Wind);
+        let t2 = std::time::Instant::now();
+        for _ in 0..n_samples {
+            dummy += wind_src.next().unwrap();
+        }
+        let elapsed_wind = t2.elapsed();
+        let ns_wind_per_sample = elapsed_wind.as_nanos() as f64 / n_samples as f64;
+        let msps_wind = (n_samples as f64 / elapsed_wind.as_secs_f64()) / 1_000_000.0;
+
+        println!("\n================== AUDIO DSP BENCHMARK ==================");
+        println!("  Rain Loop Normal (lerp + biquads): {:.2} ns/sample ({:.2} M samples/sec)", ns_per_sample, msps);
+        println!("  Rain Loop Crossfade (dual lerp + poly xfade): {:.2} ns/sample ({:.2} M samples/sec)", ns_xfade_per_sample, msps_xfade);
+        println!("  Wind Loop (biquads + soft_limit): {:.2} ns/sample ({:.2} M samples/sec)", ns_wind_per_sample, msps_wind);
+        println!("  Real-time audio budget at 44.1kHz stereo (88,200 samples/sec): 11,337.87 ns/sample");
+        println!("  CPU utilization of SeamlessLoopSource: {:.4}% of a single core", (ns_xfade_per_sample / 11337.87) * 100.0);
+        println!("  (Dummy sum: {})", dummy);
+        println!("=========================================================");
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn test_icon_set_timing() {
+        use std::time::Instant;
+        use cocoa::appkit::{NSApp, NSApplication, NSImage};
+        use cocoa::base::nil;
+        use cocoa::foundation::NSData;
+
+        unsafe {
+            let t0 = Instant::now();
+            let icon_bytes = include_bytes!("../AppIcon.icns");
+
+            let t1 = Instant::now();
+            let data = NSData::dataWithBytes_length_(nil, icon_bytes.as_ptr() as *const _, icon_bytes.len() as u64);
+            let t_nsdata = t1.elapsed();
+
+            let t2 = Instant::now();
+            let image = NSImage::initWithData_(NSImage::alloc(nil), data);
+            let t_nsimage = t2.elapsed();
+
+            let t3 = Instant::now();
+            let app = NSApp();
+            let t_nsapp = t3.elapsed();
+
+            let t4 = Instant::now();
+            if image != nil {
+                app.setApplicationIconImage_(image);
+            }
+            let t_set_icon = t4.elapsed();
+
+            println!("\n================== ICON PROFILING RESULTS ==================");
+            println!("  icon_bytes size: {} bytes ({:.2} MB)", icon_bytes.len(), icon_bytes.len() as f64 / 1024.0 / 1024.0);
+            println!("  NSData::dataWithBytes_length_: {:?}", t_nsdata);
+            println!("  NSImage::initWithData_:        {:?}", t_nsimage);
+            println!("  NSApp():                       {:?}", t_nsapp);
+            println!("  setApplicationIconImage:       {:?}", t_set_icon);
+            println!("  TOTAL icon setup:              {:?}", t0.elapsed());
+            println!("============================================================");
+        }
     }
 }
 
